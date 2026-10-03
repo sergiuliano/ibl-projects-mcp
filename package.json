@@ -1,6 +1,6 @@
 {
   "name": "ibl-projects-mcp",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "license": "MIT",
   "description": "Installable MCP stdio client for the authenticated IBL Projects Kanban service",
