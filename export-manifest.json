@@ -1,0 +1,21 @@
+{
+  "generatedBy": "IBL Projects reviewed MCP client export",
+  "repository": "sergiuliano/ibl-projects-mcp",
+  "version": "0.1.0",
+  "files": {
+    ".gitignore": "e14833ca8437ca091dbed1f37f583616f9b9f2e6b599a97145fb7445edb62292",
+    "docs/install.md": "4da10912b916a77c024b6b2017ef70b0fc5e93d604ed54f05d640273cf55af0c",
+    "LICENSE": "1fec132defe51c91a42907decd55a7438da035d8e75a0dab2d5389079181bcdb",
+    "package-lock.json": "11a7bacbdf3c0dd5ac87e15c39ec402f5541c919d368c50d2def678c99022ec0",
+    "package.json": "f52ab915f9e92e9d1d3f1f7f2ad426313f31d9927b5f2ee6b52293ddec9332b3",
+    "README.md": "41e5de966412f3fc3982e8cc3ac168f60aae45ced9e441efa0f34d076a2b831c",
+    "scripts/check-package.mjs": "309552b0363d9c048af04f28687db6c5aecee98478e37c77d1827fc1a9a14cc2",
+    "src/cli.ts": "8fb949b7c923eaa17f76705c126c95ce3ebd3486aea39b773823b0b6e357b70c",
+    "src/config.ts": "1f79377326657952d3b3e04f587323f521e1c79237686111410d811008db74c7",
+    "src/contract.ts": "7ac87c816e9ec6f0e3d3840c9192757ba6ab4e2989731ee3b35736f5d8e10694",
+    "src/remote.ts": "75f7b1a4d4296bdb3f063b1464b276658261e10e637ed10b456c82395b7c3789",
+    "src/server.ts": "351fa2369ae2b6a13e30366902250336af6c9c08588fd013c66b11d77c689ae2",
+    "test/client.test.mjs": "64be392bff07df30656067bc0bac421abd3fcef0fae617972cc8e51a808f22d2",
+    "tsconfig.json": "e6553a4c22ad8b31de0b0aec40f2cec8f21c2945a40b1564135339ee75e4d791"
+  }
+}
