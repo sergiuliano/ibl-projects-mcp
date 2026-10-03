@@ -1,6 +1,6 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 
-export const MCP_VERSION = '0.1.0';
+export const MCP_VERSION = '0.2.0';
 type Schema = Record<string, unknown>;
 const text = (maxLength = 200, minLength = 1): Schema => ({ type: 'string', minLength, maxLength });
 const uuid: Schema = { type: 'string', format: 'uuid' };

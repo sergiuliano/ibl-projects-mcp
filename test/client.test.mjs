@@ -120,7 +120,7 @@ test('mismatched hosted contract fails setup before tools are called', async t =
   assert.equal(server.calls.length, 0);
 });
 
-test('stdio discovery contains only the shared contract and stdout remains protocol clean', async t => {
+test('stdio discovery adds only the local account tool and stdout remains protocol clean', async t => {
   const server = await fixture(t);
   const client = new Client({ name: 'stdio-test', version: '1.0.0' });
   const transport = new StdioClientTransport({ command: process.execPath, args: [cli], env: server.env, stderr: 'pipe' });
@@ -129,7 +129,7 @@ test('stdio discovery contains only the shared contract and stdout remains proto
   t.after(() => client.close());
   await client.connect(transport);
   const listed = await client.listTools();
-  assert.deepEqual(listed.tools.map(tool => tool.name).sort(), TOOL_DEFINITIONS.map(tool => tool.name).sort());
+  assert.deepEqual(listed.tools.map(tool => tool.name).sort(), [...TOOL_DEFINITIONS.map(tool => tool.name), 'connect_account'].sort());
   assert.equal(server.calls.length, 0);
   const result = await client.callTool({ name: 'list_projects', arguments: {} });
   assert.deepEqual(result.structuredContent, { fixture: true });
@@ -169,7 +169,7 @@ test('authentication failure redacts token and untrusted server response from st
   const server = await fixture(t);
   const wrongToken = syntheticToken + '_wrong';
   await assert.rejects(run(process.execPath, [cli, '--setup'], { env: { ...server.env, PM_MCP_TOKEN: wrongToken }, timeout: 15_000 }), error => {
-    assert.match(error.stderr, /REMOTE_CONNECTION_FAILED/);
+    assert.match(error.stderr, /AUTH_REQUIRED/);
     assert.equal(error.stdout, '');
     assert.ok(!error.stderr.includes(wrongToken));
     assert.ok(!error.stderr.includes('Untrusted error page'));

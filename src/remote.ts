@@ -1,5 +1,5 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { StreamableHTTPClientTransport, StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 import { MCP_VERSION, TOOL_DEFINITIONS } from './contract.js';
 import { accessToken, BridgeError, endpoint } from './config.js';
@@ -39,7 +39,7 @@ export function verifyCatalog(actual: Tool[]): void {
   }
 }
 
-function failure(code: string, message: string, outcomeUncertain: boolean): CallToolResult {
+export function failure(code: string, message: string, outcomeUncertain = false): CallToolResult {
   const value = { error: { code, message, outcomeUncertain, automaticRetryPerformed: false } };
   return { isError: true, structuredContent: value, content: [{ type: 'text', text: JSON.stringify(value) }] };
 }
@@ -48,9 +48,9 @@ export class RemoteService {
   private client?: Client;
   constructor(private readonly env: NodeJS.ProcessEnv = process.env) {}
 
-  async initialize(): Promise<void> {
+  async initialize(credential?: string): Promise<void> {
     const url = endpoint(this.env);
-    const token = await accessToken(this.env);
+    const token = credential ?? await accessToken(this.env);
     const client = new Client({ name: 'ibl-projects-mcp-bridge', version: MCP_VERSION });
     this.client = client;
     try {
@@ -70,6 +70,7 @@ export class RemoteService {
     } catch (error) {
       await this.close();
       if (error instanceof BridgeError) throw error;
+      if (error instanceof StreamableHTTPError && error.code === 401) throw new BridgeError('AUTH_REQUIRED', 'Account authorization is missing, expired, or revoked. Call connect_account with action reconnect. No tool operation was submitted.');
       // SDK transport errors can include untrusted response bodies. Do not log them.
       throw new BridgeError('REMOTE_CONNECTION_FAILED', 'Cannot initialize the hosted MCP. Check the endpoint, token access, and service availability. No tool operation was submitted.');
     }
@@ -82,7 +83,8 @@ export class RemoteService {
     if (signal?.aborted) return failure('CANCELLED', 'The call was cancelled before submission.', false);
     try {
       return await this.client.callTool({ name, arguments: args }, undefined, { signal, timeout: 120_000 }) as CallToolResult;
-    } catch {
+    } catch (error) {
+      if (error instanceof StreamableHTTPError && error.code === 401) return failure('AUTH_REQUIRED', 'Account authorization expired or was revoked. Call connect_account with action reconnect. The rejected operation was not retried.');
       const uncertain = definition.annotations?.readOnlyHint !== true;
       return failure('REMOTE_REQUEST_FAILED', uncertain
         ? 'The request did not complete and its outcome is unknown. Inspect current project state before repeating the change. No automatic retry was performed.'

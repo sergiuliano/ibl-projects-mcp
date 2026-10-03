@@ -8,7 +8,7 @@ import process from 'node:process';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const cache = await mkdtemp(join(tmpdir(), 'ibl-projects-pack-'));
-const modules = new Set(['contract', 'server', 'remote', 'cli', 'config']);
+const modules = new Set(['contract', 'server', 'remote', 'cli', 'config', 'account', 'credentials', 'pairing']);
 try {
   const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
   assert.equal(pkg.private, true, 'npm publication must remain disabled.');

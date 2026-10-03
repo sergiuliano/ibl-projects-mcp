@@ -1,20 +1,25 @@
 # IBL Projects MCP client
 
-Connect an MCP host to the authenticated IBL Projects Kanban service through a local stdio bridge. Project operations run on the hosted application and retain the permissions of the user who issued the token. Sharing and membership administration are excluded.
+Connect an MCP host to your IBL Projects account through a local stdio client. Ask the host to call `connect_account`, open the returned browser link, and approve the eight-character code in IBL Projects. You do not need to copy a token. The client returns the code immediately and checks for approval in the background for up to five minutes.
 
-This client requires an MCP-enabled IBL Projects server and a user-issued token. The default endpoint is `https://pm.ibl.ro/mcp`; availability depends on the operator's server deployment. Publishing or installing this client does not deploy or enable the hosted service. The application server, database, private implementation and deployment configuration are not part of this client.
+The approved connection covers all projects your account can access, including future accessible projects. You can request read-only or read/write account access; the server continues to enforce your current project permissions. Sharing and membership administration stay in the IBL Projects interface.
 
-Follow [the installation guide](docs/install.md). Installation uses a source checkout, Node.js and `npm ci`; the package is not published to npm. Run `node dist/cli.js --setup` to verify authentication and the shared tool contract without invoking any tool.
+This client requires an MCP-enabled IBL Projects server with account pairing enabled. The default endpoint is `https://pm.ibl.ro/mcp`; availability depends on the operator's separate server deployment. Publishing or installing this client does not deploy or enable that service. The application server, database, private implementation, and deployment configuration are not included.
+
+Follow [the installation guide](docs/install.md). Installation uses a source checkout, Node.js, and npm. The package is not published to npm.
 
 ```sh
 git clone https://github.com/sergiuliano/ibl-projects-mcp.git
 cd ibl-projects-mcp
 npm ci
 npm run build
+node dist/cli.js --setup
 ```
 
-Configure your token before running the setup check. See the guide for a token-file example and MCP host configuration.
+`--setup` shows the approval code, waits for browser approval, and verifies authentication and the shared tool contract. It never calls a project tool. You can instead add the client directly to your MCP host and use `connect_account` there. Stdio initialization does not wait for account approval.
 
-Credentials are supplied by `PM_MCP_TOKEN` or `PM_MCP_TOKEN_FILE`. Keep them outside the checkout. The client never enrolls anonymously, automatically retries failed operations, or updates itself. If a mutation's response is lost, inspect the project state before repeating it.
+On supported POSIX systems, approved credentials are remembered in a private configuration directory outside the checkout and bound to the exact MCP endpoint. Systems without the required file ownership and no-follow checks keep the login for the current client session only. No OS Keychain or password manager is accessed. Advanced installations can still use `PM_MCP_TOKEN` or `PM_MCP_TOKEN_FILE` instead. Paired credentials expire after 30 days; call `connect_account` with `action: "reconnect"` to approve a replacement.
 
-For development, run `npm test` and `npm run pack:check`. Tests use an isolated local service with a synthetic token. The reusable client is available under the [MIT License](LICENSE). `private: true` in the package metadata prevents accidental npm publication; it does not restrict use under that license. Access to a hosted PM service remains subject to that service's account and project permissions.
+The client exposes 25 project tools and one local `connect_account` tool. The local account tool is not sent to the hosted MCP service. Failed project operations are never automatically retried. If a mutation's response is lost, inspect project state before repeating it.
+
+Run `npm test` and `npm run pack:check` for development checks. Tests use synthetic credentials and isolated local fixtures. The reusable client is available under the [MIT License](LICENSE). The package's `private: true` setting prevents accidental npm publication; it does not restrict use under that license. Hosted service access remains subject to account and project permissions.

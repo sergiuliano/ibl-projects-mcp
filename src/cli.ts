@@ -3,7 +3,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { MCP_VERSION } from './contract.js';
 import { createMcpServer } from './server.js';
 import { BridgeError } from './config.js';
-import { RemoteService } from './remote.js';
+import { AccountService, CONNECT_ACCOUNT_TOOL } from './account.js';
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
@@ -12,31 +12,36 @@ async function main(): Promise<void> {
   }
   if (args[0] === '--version' || args[0] === '-v') { process.stdout.write(`${MCP_VERSION}\n`); return; }
   if (args[0] === '--help' || args[0] === '-h') {
-    process.stdout.write('IBL Projects MCP\n\nRun without arguments from an MCP host using stdio.\n--setup: verify authentication and tool discovery without invoking tools.\n--version: print the client version.\n\nSet PM_MCP_TOKEN or PM_MCP_TOKEN_FILE to a user token from IBL Projects.\nOptional PM_MCP_URL defaults to https://pm.ibl.ro/mcp.\nSee docs/install.md for secure installation and local development.\n');
+    process.stdout.write('IBL Projects MCP\n\nRun without arguments from an MCP host using stdio. Ask the host to call connect_account, then approve its code in IBL Projects.\n--setup: show an account approval code, wait for approval, and verify tool discovery without a project operation. Existing authorization is reused.\n--version: print the client version.\n\nOptional PM_MCP_URL defaults to https://pm.ibl.ro/mcp.\nPM_MCP_STATE_DIR overrides the private credential directory outside this checkout.\nAdvanced: PM_MCP_TOKEN or PM_MCP_TOKEN_FILE supplies an existing token instead.\nSee docs/install.md for secure installation and local development.\n');
     return;
   }
-  const remote = new RemoteService();
+  const account = new AccountService();
+  let closing = false;
+  let server: ReturnType<typeof createMcpServer> | undefined;
+  const close = async () => {
+    if (closing) return;
+    closing = true;
+    await server?.close().catch(() => {});
+    await account.close();
+  };
+  process.once('SIGINT', () => { void close(); });
+  process.once('SIGTERM', () => { void close(); });
   try {
-    await remote.initialize();
     if (args[0] === '--setup') {
+      const persistence = await account.setup(pending => {
+        process.stdout.write(`Open ${pending.verificationUri}\nEnter code: ${pending.userCode}\nApprove access for your account. This code expires at ${pending.expiresAt}. Waiting for approval...\n`);
+      });
+      if (persistence.notice) process.stdout.write(`${persistence.notice}\n`);
       process.stdout.write('IBL Projects MCP is authenticated and its tool contract matches. No tool operation was submitted.\n');
-      await remote.close();
+      await close();
       return;
     }
-    const server = createMcpServer(remote);
-    server.onclose = () => { void remote.close(); };
-    let closing = false;
-    const close = async () => {
-      if (closing) return;
-      closing = true;
-      await server.close().catch(() => {});
-      await remote.close();
-    };
-    process.once('SIGINT', () => { void close(); });
-    process.once('SIGTERM', () => { void close(); });
+    // Host initialization and discovery must never wait for browser approval.
+    server = createMcpServer(account, [CONNECT_ACCOUNT_TOOL]);
+    server.onclose = () => { void account.close(); };
     await server.connect(new StdioServerTransport());
   } catch (error) {
-    await remote.close();
+    await close();
     throw error;
   }
 }

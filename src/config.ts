@@ -21,7 +21,7 @@ export function endpoint(env: NodeJS.ProcessEnv): URL {
   return url;
 }
 
-function validateToken(value: string): string {
+export function validateToken(value: string): string {
   const token = value.trim();
   if (token.length < 16 || token.length > 4096 || !/^[A-Za-z0-9._~+/-]+=*$/.test(token)) {
     throw new BridgeError('CONFIG_ERROR', 'The MCP token has an invalid format. Create a token in IBL Projects and configure it again.');
@@ -37,22 +37,30 @@ export async function accessToken(env: NodeJS.ProcessEnv): Promise<string> {
   const path = env.PM_MCP_TOKEN_FILE;
   if (!path) throw new BridgeError('CONFIG_ERROR', 'Set PM_MCP_TOKEN or PM_MCP_TOKEN_FILE to a user token created in IBL Projects.');
   if (!isAbsolute(path)) throw new BridgeError('CONFIG_ERROR', 'PM_MCP_TOKEN_FILE must be an absolute path outside this repository.');
-  if (typeof process.getuid !== 'function' || !constants.O_NOFOLLOW) {
+  return validateToken(await readPrivateFile(path));
+}
+
+export function supportsPrivateFiles(): boolean {
+  return typeof process.getuid === 'function' && !!constants.O_NOFOLLOW;
+}
+
+export async function readPrivateFile(path: string): Promise<string> {
+  if (!supportsPrivateFiles()) {
     throw new BridgeError('CONFIG_ERROR', 'Secure token-file checks require a POSIX system. Use PM_MCP_TOKEN on this platform.');
   }
   // Open first with no-follow, then validate the same descriptor that is read.
   // This avoids a check/read race and refuses a symlink as the token file.
   let file;
   try {
-    file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const stat = await file.stat();
-    if (!stat.isFile() || stat.uid !== process.getuid() || (stat.mode & 0o777) !== 0o600 || stat.size > 8192) {
+    if (!stat.isFile() || stat.uid !== process.getuid!() || (stat.mode & 0o777) !== 0o600 || stat.size > 8192) {
       throw new BridgeError('CONFIG_ERROR', 'The token file must be a regular file owned by the current user with permissions 0600.');
     }
     const buffer = Buffer.alloc(8193);
     const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
     if (bytesRead > 8192) throw new BridgeError('CONFIG_ERROR', 'The token file is too large.');
-    return validateToken(buffer.subarray(0, bytesRead).toString('utf8'));
+    return buffer.subarray(0, bytesRead).toString('utf8');
   } catch (error) {
     if (error instanceof BridgeError) throw error;
     throw new BridgeError('CONFIG_ERROR', 'Cannot read the token file. Check its location, ownership, permissions, and that it is not a symlink.');
