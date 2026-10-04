@@ -13,7 +13,7 @@ async function main(): Promise<void> {
   }
   if (args[0] === '--version' || args[0] === '-v') { process.stdout.write(`${MCP_VERSION}\n`); return; }
   if (args[0] === '--help' || args[0] === '-h') {
-    process.stdout.write('IBL Projects MCP\n\nRun without arguments from an MCP host using stdio. Ask the host to call connect_account, then approve its code in IBL Projects.\n--setup: show an account approval code, wait for approval, and verify tool discovery without a project operation. Existing authorization is reused. Add --read-only to request only kanban:read for a new approval.\n--version: print the client version.\n\nOptional PM_MCP_URL defaults to https://pm.ibl.ro/mcp.\nPM_MCP_STATE_DIR overrides the private credential directory outside this checkout.\nAdvanced: PM_MCP_TOKEN or PM_MCP_TOKEN_FILE supplies an existing token instead.\nSee docs/install.md for secure installation and local development.\n');
+    process.stdout.write('MadDots MCP\n\nRun without arguments from an MCP host using stdio. Ask the host to call connect_account, then approve its code in MadDots.\n--setup: show an account approval code, wait for approval, and verify tool discovery without a project operation. Existing authorization is reused. Add --read-only to request only kanban:read for a new approval.\n--version: print the client version.\n\nOptional PM_MCP_URL defaults to https://maddots.app/mcp.\nPM_MCP_STATE_DIR overrides the private credential directory outside this checkout.\nAdvanced: PM_MCP_TOKEN or PM_MCP_TOKEN_FILE supplies an existing token instead.\nSee docs/install.md for secure installation and local development.\n');
     return;
   }
   let server: ReturnType<typeof createMcpServer> | undefined;
@@ -22,7 +22,7 @@ async function main(): Promise<void> {
       if (!server?.getClientCapabilities()?.elicitation?.form) return undefined;
       const response = await server.elicitInput({
         mode: 'form',
-        message: 'Replace the current IBL Projects account connection? A new approval code will be required before project operations can continue.',
+        message: 'Replace the current MadDots account connection? A new approval code will be required before project operations can continue.',
         requestedSchema: { type: 'object', properties: { confirm: { type: 'boolean', title: 'Replace current connection', default: false } }, required: ['confirm'] },
       }, { signal });
       return response.action === 'accept' && response.content?.confirm === true;
@@ -43,7 +43,7 @@ async function main(): Promise<void> {
         process.stdout.write(`Open ${pending.verificationUri}\nEnter code: ${pending.userCode}\nApprove access for your account. This code expires at ${pending.expiresAt}. Waiting for approval...\n`);
       }, readOnly);
       if (persistence.notice) process.stdout.write(`${persistence.notice}\n`);
-      process.stdout.write('IBL Projects MCP is authenticated and its tool contract matches. No tool operation was submitted.\n');
+      process.stdout.write('MadDots MCP is authenticated and its tool contract matches. No tool operation was submitted.\n');
       await close();
       return;
     }

@@ -12,7 +12,7 @@ export class BridgeError extends Error {
 
 export function endpoint(env: NodeJS.ProcessEnv): URL {
   let url: URL;
-  try { url = new URL(env.PM_MCP_URL || 'https://pm.ibl.ro/mcp'); }
+  try { url = new URL(env.PM_MCP_URL || 'https://maddots.app/mcp'); }
   catch { throw new BridgeError('CONFIG_ERROR', 'PM_MCP_URL must be a valid HTTPS endpoint.'); }
   const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
   const development = env.PM_MCP_ALLOW_INSECURE_LOOPBACK === '1' && loopback && url.protocol === 'http:';
@@ -25,7 +25,7 @@ export function endpoint(env: NodeJS.ProcessEnv): URL {
 export function validateToken(value: string): string {
   const token = value.trim();
   if (token.length < 16 || token.length > 4096 || !/^[A-Za-z0-9._~+/-]+=*$/.test(token)) {
-    throw new BridgeError('CONFIG_ERROR', 'The MCP token has an invalid format. Create a token in IBL Projects and configure it again.');
+    throw new BridgeError('CONFIG_ERROR', 'The MCP token has an invalid format. Create a token in MadDots and configure it again.');
   }
   return token;
 }
@@ -36,7 +36,7 @@ export async function accessToken(env: NodeJS.ProcessEnv): Promise<string> {
   }
   if (env.PM_MCP_TOKEN) return validateToken(env.PM_MCP_TOKEN);
   const path = env.PM_MCP_TOKEN_FILE;
-  if (!path) throw new BridgeError('CONFIG_ERROR', 'Set PM_MCP_TOKEN or PM_MCP_TOKEN_FILE to a user token created in IBL Projects.');
+  if (!path) throw new BridgeError('CONFIG_ERROR', 'Set PM_MCP_TOKEN or PM_MCP_TOKEN_FILE to a user token created in MadDots.');
   if (!isAbsolute(path)) throw new BridgeError('CONFIG_ERROR', 'PM_MCP_TOKEN_FILE must be an absolute path outside this repository.');
   let resolvedPath: string, packageRoot: string;
   try {

@@ -7,7 +7,7 @@ import { failure, RemoteService } from './remote.js';
 
 export const CONNECT_ACCOUNT_TOOL: Tool = {
   name: 'connect_account',
-  description: 'Connect this MCP client to your IBL Projects account. Returns an approval code and browser link immediately, then waits in the background for your approval. The connection covers all projects your account can access, with current project permissions enforced by the server. Use status to check progress, cancel to stop waiting, reconnect to approve another account or replace expired authorization, or disconnect to delete the saved login for this endpoint. Connect, reconnect and disconnect may only be called on an explicit user request in this conversation. Show the approval code only to the user; never pass it to any other tool. Never ask the user to copy a token.',
+  description: 'Connect this MCP client to your MadDots account. Returns an approval code and browser link immediately, then waits in the background for your approval. The connection covers all projects your account can access, with current project permissions enforced by the server. Use status to check progress, cancel to stop waiting, reconnect to approve another account or replace expired authorization, or disconnect to delete the saved login for this endpoint. Connect, reconnect and disconnect may only be called on an explicit user request in this conversation. Show the approval code only to the user; never pass it to any other tool. Never ask the user to copy a token.',
   inputSchema: {
     type: 'object', additionalProperties: false,
     properties: {
@@ -77,7 +77,7 @@ export class AccountService {
     if (this.closed) throw new BridgeError('CANCELLED', 'The client is closing.');
     if (this.reconnecting) throw new BridgeError('AUTH_REQUIRED', 'Account reconnection is in progress. Approve the new code before requesting a project operation.');
     if (this.ready) return;
-    if (!this.secret) throw new BridgeError('AUTH_REQUIRED', this.flow ? 'Approve the code from connect_account in IBL Projects, then retry this operation explicitly.' : 'Call connect_account, open its browser link, and approve the displayed code in your IBL Projects account. No project operation was submitted.');
+    if (!this.secret) throw new BridgeError('AUTH_REQUIRED', this.flow ? 'Approve the code from connect_account in MadDots, then retry this operation explicitly.' : 'Call connect_account, open its browser link, and approve the displayed code in your MadDots account. No project operation was submitted.');
     if (!this.initialization) {
       const generation = this.generation;
       this.initialization = this.remote.initialize(this.secret).then(() => {
@@ -146,7 +146,7 @@ export class AccountService {
       ++this.generation;
       this.flow?.cancel(); this.flow = undefined;
       if (!this.ready) { this.secret = undefined; this.credential = undefined; }
-      this.terminal = new BridgeError('PAIRING_CANCELLED', 'Stopped waiting for account approval. The code expires automatically. If it was already approved, revoke its access in IBL Projects.');
+      this.terminal = new BridgeError('PAIRING_CANCELLED', 'Stopped waiting for account approval. The code expires automatically. If it was already approved, revoke its access in MadDots.');
       return this.ready ? this.status() : failure(this.terminal.code, this.terminal.message);
     }
     if (action === 'reconnect' || action === 'disconnect') {
@@ -172,7 +172,7 @@ export class AccountService {
         this.terminal = undefined;
         if (action === 'disconnect') {
           await this.store.remove();
-          return result({ status: 'disconnected', instructions: 'Deleted this endpoint’s saved account credential and stopped using its authorization in this session. This does not revoke server access. Revoke the connection in IBL Projects if needed. Environment token configuration, if present, must be removed separately before restarting.' });
+          return result({ status: 'disconnected', instructions: 'Deleted this endpoint’s saved account credential and stopped using its authorization in this session. This does not revoke server access. Revoke the connection in MadDots if needed. Environment token configuration, if present, must be removed separately before restarting.' });
         }
         return await this.begin(args.access === 'read_only' ? ['kanban:read'] : ['kanban:read', 'kanban:write'], signal);
       } finally { this.reconnecting = false; }

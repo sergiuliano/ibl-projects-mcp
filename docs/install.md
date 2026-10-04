@@ -1,19 +1,41 @@
-# Install the IBL Projects MCP client
+# Install the MadDots MCP client
 
-Requirements: Node.js 22.22.1 or later in the Node 22 or 24 series, npm, Git, and an IBL Projects account. The server operator must deploy and enable MCP and account pairing separately. These installation steps do not establish that the default service is already available.
+Requirements: Node.js 22.22.1 or later in the Node 22 or 24 series, npm, Git, and a MadDots account. The server operator must deploy and enable MCP and account pairing separately. These installation steps do not establish that the default service is already available.
 
-1. Clone the pinned release `v0.3.0` of [sergiuliano/ibl-projects-mcp](https://github.com/sergiuliano/ibl-projects-mcp) into a stable local directory.
-2. Run `npm ci` and `npm run build` there.
-3. Run `node dist/cli.js --setup`. Open the displayed link, sign in to the intended IBL Projects account, enter the eight-character code, and approve the connection. The code expires after five minutes.
-4. Configure your MCP host to run `node` with the absolute path to `dist/cli.js`, without `--setup`.
+1. Clone the pinned release `v0.4.1` of [sergiuliano/ibl-projects-mcp](https://github.com/sergiuliano/ibl-projects-mcp) into a stable local directory.
+2. Configure release signing trust as described below, then run `git verify-tag v0.4.1`.
+3. Run `npm ci` and `npm run build` there.
+4. Run `node dist/cli.js --setup`. Open the displayed link, sign in to the intended MadDots account, enter the eight-character code, and approve the connection. The code expires after five minutes.
+5. Configure your MCP host to run `node` with the absolute path to `dist/cli.js`, without `--setup`.
 
 ```sh
-git clone --branch v0.3.0 --depth 1 https://github.com/sergiuliano/ibl-projects-mcp.git
-cd ibl-projects-mcp
-npm ci
-npm run build
+git clone --branch v0.4.1 --depth 1 https://github.com/sergiuliano/ibl-projects-mcp.git &&
+cd ibl-projects-mcp &&
+git config gpg.ssh.allowedSignersFile /ABSOLUTE/PATH/allowed_signers &&
+git verify-tag v0.4.1 &&
+npm ci &&
+npm run build &&
 node dist/cli.js --setup
 ```
+
+## Trust the release signing key
+
+Obtain the repository owner's public SSH keys from [github.com/sergiuliano.keys](https://github.com/sergiuliano.keys) and save them outside the checkout. Inspect their fingerprints with `ssh-keygen -lf /ABSOLUTE/PATH/owner-public-keys`. Confirm the release signing key with the owner through a trusted channel. Its expected fingerprint is `SHA256:SJc+HpF3Z0k4kBgVo7q5/YH+wzR/w7liTK03a7FgVoQ`.
+
+Copy only the public key matching that verified fingerprint into an allowed-signers file outside the checkout, using this format. Replace the placeholder with that key's base64 public data:
+
+```text
+sergiuliano namespaces="git" ssh-ed25519 <verified-base64-public-key>
+```
+
+Configure this checkout to use the file:
+
+```sh
+git config gpg.ssh.allowedSignersFile /ABSOLUTE/PATH/allowed_signers
+git verify-tag v0.4.1
+```
+
+Continue only when Git reports a good signature for `sergiuliano` with the verified fingerprint. Do not trust every key in the downloaded list automatically. A changed signing key requires a new confirmation with the owner.
 
 For a new read-only approval, run `node dist/cli.js --setup --read-only`. This requests only `kanban:read`; an existing authorization is reused with its original scopes.
 
@@ -40,7 +62,7 @@ Replace the path with your own stable installation path. The client starts immed
 | --- | --- | --- |
 | `action` | `connect` (default) | Verify an existing login or create an approval code. Repeated calls while pending return the current code. |
 | `action` | `status` | Read the current connection state without creating another code. |
-| `action` | `cancel` | Stop local polling. The code expires automatically; if it was already approved, revoke the connection in IBL Projects. |
+| `action` | `cancel` | Stop local polling. The code expires automatically; if it was already approved, revoke the connection in MadDots. |
 | `action` | `reconnect` | Stop using the current login in this session and request a new approval, for example to switch accounts or replace expired authorization. |
 | `action` | `disconnect` | Delete the saved credential for the current endpoint and stop using its authorization in this session. Only call this on an explicit user request. |
 | `confirm` | `true` | On a host without MCP form elicitation, confirm reconnect only after the user explicitly approves replacing the current connection. |
@@ -50,7 +72,7 @@ Connect and reconnect require an explicit user request in the current conversati
 
 Each connection covers all projects the approved account can access, including future accessible projects. There is no separate project selection during pairing. Read/write approval does not grant permissions that your account lacks. The server applies current owner, editor, and viewer permissions to every operation. Sharing and membership changes remain in the browser interface.
 
-Approve codes only when you initiated the connection, and confirm the displayed account and requested access. Approval issues a revocable 30-day credential. Its expiry is shown by `connect_account` with `action: "status"`. When it expires or is revoked, call `connect_account` with `action: "reconnect"` and approve a new code. There is no silent token renewal. An expired saved login also causes the next `--setup` to start a new approval. Revoke access in IBL Projects when it is no longer needed.
+Approve codes only when you initiated the connection, and confirm the displayed account and requested access. Approval issues a revocable 30-day credential. Its expiry is shown by `connect_account` with `action: "status"`. When it expires or is revoked, call `connect_account` with `action: "reconnect"` and approve a new code. There is no silent token renewal. An expired saved login also causes the next `--setup` to start a new approval. Revoke access in MadDots when it is no longer needed.
 
 Expired, declined, already claimed, or interrupted approvals stop polling and require an explicit new `connect_account` request. Press Ctrl+C to cancel foreground setup.
 
@@ -62,7 +84,7 @@ Set `PM_MCP_STATE_DIR` to an absolute private directory outside this checkout if
 
 If the platform cannot enforce the required POSIX file checks, or a credential cannot be saved safely, an approved connection remains usable in memory for the current session. The connection status reports that it was not remembered. In that case, use pairing within the running MCP host and approve a new code after restarting it; a separate `--setup` process cannot pass its in-memory login to another process. Do not weaken file permissions to enable persistence.
 
-An explicit reconnect stops using the old login in the current session. A new approved login replaces the saved credential only after approval; until then, restarting the client may restore the previously saved account. Reconnect does not revoke the previous server-side credential. Manage revocation in IBL Projects. An explicit `disconnect` deletes only the current endpoint’s saved credential, cancels pending approval, and clears authorization for this client session. It does not revoke server access or change environment token configuration; remove manual token configuration separately before restarting. Authorization failures clear the in-memory credential without deleting the saved file.
+An explicit reconnect stops using the old login in the current session. A new approved login replaces the saved credential only after approval; until then, restarting the client may restore the previously saved account. Reconnect does not revoke the previous server-side credential. Manage revocation in MadDots. An explicit `disconnect` deletes only the current endpoint’s saved credential, cancels pending approval, and clears authorization for this client session. It does not revoke server access or change environment token configuration; remove manual token configuration separately before restarting. Authorization failures clear the in-memory credential without deleting the saved file.
 
 ## Advanced: existing bearer tokens
 
@@ -74,20 +96,20 @@ Do not put a token in command-line arguments, a URL, or a committed host configu
 
 ## Endpoint and local development
 
-`PM_MCP_URL` defaults to `https://pm.ibl.ro/mcp`. Overrides require HTTPS without a username, password, query, or fragment. Pairing uses `/api/mcp/pairings` and `/api/mcp/pairings/poll` on the same origin; approval links must point to that origin's `/integrations` page. The client refuses redirects so neither the bearer token nor polling secret can follow a redirected request.
+`PM_MCP_URL` defaults to `https://maddots.app/mcp`. Overrides require HTTPS without a username, password, query, or fragment. Pairing uses `/api/mcp/pairings` and `/api/mcp/pairings/poll` on the same origin; approval links must point to that origin's `/integrations` page. The client refuses redirects so neither the bearer token nor polling secret can follow a redirected request.
 
 An explicit local endpoint such as `http://127.0.0.1:PORT/mcp` also requires `PM_MCP_ALLOW_INSECURE_LOOPBACK=1`. HTTP to remote hosts remains rejected. Use synthetic credentials, a temporary `PM_MCP_STATE_DIR`, and an isolated database for development.
 
 ## Updates, failures, and data flow
 
-These instructions target `v0.3.0`; use them only after the owner publishes that release. Unsigned lightweight tags cannot be verified by this procedure. The owner must create and publish a signed release tag; this guide does not establish that `v0.3.0` already exists.
+These instructions target `v0.4.1`; use them only after the owner publishes that release. Unsigned lightweight tags cannot be verified by this procedure. The owner must create and publish a signed release tag; this guide does not establish that `v0.4.1` already exists.
 
 Update to the exact release only after its signature verifies:
 
 ```sh
-git fetch origin tag v0.3.0 &&
-git verify-tag v0.3.0 &&
-git checkout --detach v0.3.0 &&
+git fetch origin tag v0.4.1 &&
+git verify-tag v0.4.1 &&
+git checkout --detach v0.4.1 &&
 npm ci &&
 npm run build &&
 node dist/cli.js --setup
@@ -104,3 +126,5 @@ The client keeps no local project cache or activity log. Your MCP host may retai
 ## License and distribution
 
 This reusable client is licensed under [MIT](../LICENSE) and installed from its public GitHub source repository. npm publication and hosted server deployment are separate actions and are not performed by these instructions.
+
+Version 0.4.1 changes the default endpoint to `https://maddots.app/mcp` without changing the tool catalog. Saved credentials are scoped to their exact endpoint and are not copied between origins. Approve a new account connection on the canonical endpoint, or explicitly set `PM_MCP_URL=https://pm.ibl.ro/mcp` to retain the legacy endpoint and its saved credential.
