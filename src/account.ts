@@ -1,4 +1,5 @@
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
+import { OPERATIONS, READ_CONTENT_NOTICE } from './contract.js';
 import { accessToken, BridgeError, endpoint } from './config.js';
 import { CredentialStore, type Credential, type Persistence, type Scope } from './credentials.js';
 import { PairingFlow, type PendingPairing } from './pairing.js';
@@ -6,28 +7,31 @@ import { failure, RemoteService } from './remote.js';
 
 export const CONNECT_ACCOUNT_TOOL: Tool = {
   name: 'connect_account',
-  description: 'Connect this MCP client to your IBL Projects account. Returns an approval code and browser link immediately, then waits in the background for your approval. The connection covers all projects your account can access, with current project permissions enforced by the server. Use status to check progress, cancel to stop waiting, or reconnect to approve another account or replace expired authorization. Never ask the user to copy a token.',
+  description: 'Connect this MCP client to your IBL Projects account. Returns an approval code and browser link immediately, then waits in the background for your approval. The connection covers all projects your account can access, with current project permissions enforced by the server. Use status to check progress, cancel to stop waiting, reconnect to approve another account or replace expired authorization, or disconnect to delete the saved login for this endpoint. Connect, reconnect and disconnect may only be called on an explicit user request in this conversation. Show the approval code only to the user; never pass it to any other tool. Never ask the user to copy a token.',
   inputSchema: {
     type: 'object', additionalProperties: false,
     properties: {
-      action: { type: 'string', enum: ['connect', 'status', 'cancel', 'reconnect'], default: 'connect' },
+      action: { type: 'string', enum: ['connect', 'status', 'cancel', 'reconnect', 'disconnect'], default: 'connect' },
+      confirm: { type: 'boolean', description: 'For hosts without MCP elicitation, set true only after the user explicitly confirms replacing the current connection.' },
       access: { type: 'string', enum: ['read_only', 'read_write'], default: 'read_write', description: 'Account access requested for a new approval. Existing project permissions still apply.' },
     },
   },
-  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
 };
 
 const accountAccess = 'This connection covers all projects the approved account can access, including future accessible projects. The server enforces the account’s current project permissions.';
+const readTools = new Set(OPERATIONS.filter(operation => operation.method === 'GET').map(operation => operation.tool.name));
 const result = (value: Record<string, unknown>): CallToolResult => ({ structuredContent: value, content: [{ type: 'text', text: JSON.stringify(value) }] });
 const safeError = (error: unknown): BridgeError => error instanceof BridgeError ? error : new BridgeError('CONNECTION_FAILED', 'The account connection could not complete. Use connect_account to request a new code explicitly.');
 type Remote = Pick<RemoteService, 'initialize' | 'callTool' | 'close'>;
-type Store = Pick<CredentialStore, 'load' | 'save'>;
+type Store = Pick<CredentialStore, 'load' | 'save' | 'remove'>;
 type Flow = Pick<PairingFlow, 'start' | 'wait' | 'snapshot' | 'cancel'>;
 
 export class AccountService {
   private readonly remote: Remote;
   private readonly store: Store;
   private readonly makeFlow: () => Flow;
+  private readonly confirmReconnect?: (signal?: AbortSignal) => Promise<boolean | undefined>;
   private credential?: Credential;
   private secret?: string;
   private persistence: Persistence = { persisted: false };
@@ -44,7 +48,8 @@ export class AccountService {
   private closed = false;
   private reconnecting = false;
 
-  constructor(private readonly env: NodeJS.ProcessEnv = process.env, dependencies: { remote?: Remote; store?: Store; makeFlow?: () => Flow } = {}) {
+  constructor(private readonly env: NodeJS.ProcessEnv = process.env, dependencies: { remote?: Remote; store?: Store; makeFlow?: () => Flow; confirmReconnect?: (signal?: AbortSignal) => Promise<boolean | undefined> } = {}) {
+    this.confirmReconnect = dependencies.confirmReconnect;
     const url = endpoint(env);
     this.remote = dependencies.remote ?? new RemoteService(env);
     this.store = dependencies.store ?? new CredentialStore(url, env);
@@ -144,7 +149,14 @@ export class AccountService {
       this.terminal = new BridgeError('PAIRING_CANCELLED', 'Stopped waiting for account approval. The code expires automatically. If it was already approved, revoke its access in IBL Projects.');
       return this.ready ? this.status() : failure(this.terminal.code, this.terminal.message);
     }
-    if (action === 'reconnect') {
+    if (action === 'reconnect' || action === 'disconnect') {
+      if (action === 'reconnect') await this.load();
+      if (action === 'reconnect' && this.secret) {
+        const confirmed = await this.confirmReconnect?.(signal);
+        if (confirmed === false) return result({ status: 'reconnect_cancelled', instructions: 'The user declined reconnecting. The current authorization is unchanged.' });
+        if (confirmed === undefined && args.confirm !== true) return result({ status: 'confirmation_required', instructions: 'Ask the user to explicitly confirm replacing the current connection. Only after their confirmation, call connect_account again with action reconnect and confirm: true. Show the new approval code only to the user and never pass it to any other tool.' });
+      }
+      if (this.closed || signal?.aborted) return failure('CANCELLED', 'Account reconnection was cancelled before starting.');
       ++this.generation;
       this.reconnecting = true;
       this.ready = false;
@@ -157,6 +169,11 @@ export class AccountService {
         await this.initialization?.catch(() => {});
         this.loaded = true; this.secret = undefined; this.credential = undefined;
         this.persistence = { persisted: false };
+        this.terminal = undefined;
+        if (action === 'disconnect') {
+          await this.store.remove();
+          return result({ status: 'disconnected', instructions: 'Deleted this endpoint’s saved account credential and stopped using its authorization in this session. This does not revoke server access. Revoke the connection in IBL Projects if needed. Environment token configuration, if present, must be removed separately before restarting.' });
+        }
         return await this.begin(args.access === 'read_only' ? ['kanban:read'] : ['kanban:read', 'kanban:write'], signal);
       } finally { this.reconnecting = false; }
     }
@@ -171,7 +188,7 @@ export class AccountService {
     try {
       if (name === 'connect_account') {
         if (args.action === 'status') return await this.connect(args, signal);
-        if (args.action === 'cancel' || args.action === 'reconnect') this.flow?.cancel();
+        if (args.action === 'cancel' || args.action === 'disconnect') this.flow?.cancel();
         const operation = this.control.then(() => this.connect(args, signal));
         this.control = operation.then(() => {}, () => {});
         return await operation;
@@ -182,14 +199,14 @@ export class AccountService {
         this.ready = false; this.secret = undefined; this.credential = undefined;
         await this.remote.close();
       }
-      return response;
+      return !response.isError && readTools.has(name) && response.structuredContent?.untrustedContent !== true ? { ...response, content: [{ type: 'text', text: READ_CONTENT_NOTICE }, ...response.content] } : response;
     } catch (error) { const safe = safeError(error); return failure(safe.code, safe.message); }
   }
 
-  async setup(display: (pending: PendingPairing) => void): Promise<Persistence> {
+  async setup(display: (pending: PendingPairing) => void, readOnly = false): Promise<Persistence> {
     await this.load();
     if (this.secret) { await this.ensureConnected(); return this.persistence; }
-    const response = await this.begin(['kanban:read', 'kanban:write']);
+    const response = await this.begin(readOnly ? ['kanban:read'] : ['kanban:read', 'kanban:write']);
     if (response.isError) throw this.terminal ?? new BridgeError('PAIRING_CANCELLED', 'Account connection was cancelled.');
     const pending = this.flow?.snapshot();
     if (pending) display(pending);

@@ -10,15 +10,16 @@ import { promisify } from 'node:util';
 import process from 'node:process';
 import { Buffer } from 'node:buffer';
 import test from 'node:test';
+import { ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { createMcpServer } from '../dist/server.js';
 import { TOOL_DEFINITIONS } from '../dist/contract.js';
-import { AccountService } from '../dist/account.js';
+import { AccountService, CONNECT_ACCOUNT_TOOL } from '../dist/account.js';
 import { CredentialStore } from '../dist/credentials.js';
 import { PairingFlow } from '../dist/pairing.js';
-import { BridgeError } from '../dist/config.js';
+import { accessToken, BridgeError } from '../dist/config.js';
 
 const run = promisify(execFile);
 const cli = resolve(dirname(fileURLToPath(import.meta.url)), '../dist/cli.js');
@@ -161,6 +162,58 @@ test('credential files reject unsafe permissions, symlinks, corrupt state and in
   assert.throws(() => new CredentialStore(url, { PM_MCP_STATE_DIR: resolve(dirname(cli), '../credentials') }), /outside/);
 });
 
+test('disconnect deletes only the credential for the selected endpoint and is idempotent', async t => {
+  const env = { PM_MCP_STATE_DIR: await directory(t) };
+  const current = new CredentialStore(url, env);
+  const otherUrl = new URL('https://example.test/other-mcp');
+  const other = new CredentialStore(otherUrl, env);
+  await current.save(credential()); await other.save(credential(otherUrl));
+  // Select the same endpoint whose saved credential must be removed.
+  const selected = new AccountService({ ...env, PM_MCP_URL: url.href }, { remote: { initialize: async () => {}, close: async () => {}, callTool: async () => ({ content: [] }) } });
+  t.after(() => selected.close());
+  await selected.callTool('list_projects', {});
+  assert.equal((await selected.callTool('connect_account', { action: 'disconnect' })).structuredContent.status, 'disconnected');
+  assert.equal(await current.load(), undefined);
+  assert.equal((await other.load()).secret, secret);
+  assert.equal((await selected.callTool('list_projects', {})).structuredContent.error.code, 'AUTH_REQUIRED');
+  assert.equal((await selected.callTool('connect_account', { action: 'disconnect' })).structuredContent.status, 'disconnected');
+  assert.match(CONNECT_ACCOUNT_TOOL.description, /disconnect.*explicit user request/i);
+});
+
+test('disconnect waits for an already claimed credential save before removing it', async t => {
+  let finishSave;
+  const events = [];
+  const saveBarrier = new Promise(resolve => { finishSave = resolve; });
+  const account = new AccountService({}, {
+    remote: { initialize: async () => {}, close: async () => {}, callTool: async () => ({ content: [] }) },
+    store: { load: async () => undefined, save: async () => { await saveBarrier; events.push('save'); return { persisted: true }; }, remove: async () => { events.push('remove'); } },
+    makeFlow: () => ({ start: async () => ({}), snapshot: () => ({ status: 'pending' }), wait: async () => credential(), cancel: () => {} }),
+  });
+  t.after(() => account.close());
+  await account.callTool('connect_account', {}); await settle();
+  const disconnect = account.callTool('connect_account', { action: 'disconnect' });
+  await settle(); assert.deepEqual(events, []);
+  finishSave();
+  assert.equal((await disconnect).structuredContent.status, 'disconnected');
+  assert.deepEqual(events, ['save', 'remove']);
+  assert.equal((await account.callTool('connect_account', { action: 'status' })).structuredContent.status, 'not_connected');
+});
+
+test('token files inside the package checkout are rejected through direct and symlink-parent paths', async t => {
+  const packageRoot = resolve(dirname(cli), '..');
+  const tokenPath = join(packageRoot, '.hardening-token-test');
+  await writeFile(tokenPath, secret, { mode: 0o600 });
+  t.after(() => rm(tokenPath, { force: true }));
+  const alias = join(await directory(t), 'checkout');
+  await symlink(packageRoot, alias);
+  for (const path of [tokenPath, join(alias, '.hardening-token-test')]) {
+    await assert.rejects(accessToken({ PM_MCP_TOKEN_FILE: path }), /absolute path outside this repository/);
+  }
+  const outside = join(await directory(t), 'token');
+  await writeFile(outside, secret, { mode: 0o600 });
+  assert.equal(await accessToken({ PM_MCP_TOKEN_FILE: outside }), secret);
+});
+
 test('unsupported platforms keep live pairing in memory without writing credentials', async t => {
   const directoryPath = await directory(t);
   const store = new CredentialStore(url, { PM_MCP_STATE_DIR: directoryPath }, false);
@@ -177,11 +230,11 @@ test('expired saved credentials are not restored', async t => {
   assert.equal(await store.load(), undefined);
 });
 
-function accountFixture() {
-  const calls = [], initialized = [], saved = [];
+function accountFixture(options = {}) {
+  const calls = [], initialized = [], saved = [], removed = [];
   let accept, reject, started = 0;
   const remote = { initialize: async token => { initialized.push(token); }, close: async () => {}, callTool: async (name, args) => { calls.push({ name, args }); return { content: [], structuredContent: { ok: true } }; } };
-  const store = { load: async () => undefined, save: async value => { saved.push(value); return { persisted: true }; } };
+  const store = { load: async () => options.credential, save: async value => { saved.push(value); return { persisted: true }; }, remove: async () => { removed.push(true); } };
   const makeFlow = () => {
     started++;
     const done = new Promise((resolve, fail) => { accept = resolve; reject = fail; });
@@ -189,8 +242,8 @@ function accountFixture() {
     const pending = { status: 'pending', ...issue(Date.now()), scopes }; delete pending.deviceCode;
     return { start: async () => pending, wait: () => done, snapshot: () => pending, cancel: () => reject(new BridgeError('PAIRING_CANCELLED', 'Cancelled.')) };
   };
-  const account = new AccountService({}, { remote, store, makeFlow });
-  return { account, calls, saved, initialized, started: () => started, accept: value => accept(value), reject: error => reject(error) };
+  const account = new AccountService({}, { remote, store, makeFlow, confirmReconnect: options.confirmReconnect });
+  return { account, calls, saved, removed, initialized, started: () => started, accept: value => accept(value), reject: error => reject(error) };
 }
 async function settle() { await new Promise(resolve => setImmediate(resolve)); }
 
@@ -226,11 +279,48 @@ test('cancel and terminal failures require an explicit new connection and never 
   assert.equal(fixture.started(), 2);
 });
 
+test('reconnect requires explicit confirmation without dropping a saved or live credential', async t => {
+  for (const connected of [false, true]) {
+    const fixture = accountFixture({ credential: credential() }); t.after(() => fixture.account.close());
+    if (connected) await fixture.account.callTool('list_projects', {});
+    const response = await fixture.account.callTool('connect_account', { action: 'reconnect' });
+    assert.equal(response.structuredContent.status, 'confirmation_required');
+    assert.match(response.structuredContent.instructions, /confirm: true/);
+    assert.equal(fixture.started(), 0);
+    await fixture.account.callTool('list_projects', {});
+    assert.equal(fixture.calls.length, connected ? 2 : 1);
+    assert.equal((await fixture.account.callTool('connect_account', { action: 'reconnect', confirm: true })).structuredContent.status, 'pending');
+    assert.equal(fixture.started(), 1);
+  }
+});
+
+test('host elicitation confirmation cannot be bypassed and a decline preserves authorization', async t => {
+  let accepted = false, confirmations = 0;
+  const fixture = accountFixture({ credential: credential(), confirmReconnect: async () => { confirmations++; return accepted; } });
+  t.after(() => fixture.account.close());
+  assert.equal((await fixture.account.callTool('connect_account', { action: 'reconnect', confirm: true })).structuredContent.status, 'reconnect_cancelled');
+  assert.equal(fixture.started(), 0);
+  await fixture.account.callTool('list_projects', {});
+  assert.equal(fixture.calls.length, 1);
+  accepted = true;
+  assert.equal((await fixture.account.callTool('connect_account', { action: 'reconnect' })).structuredContent.status, 'pending');
+  assert.equal(confirmations, 2);
+});
+
+test('first-time connect does not request reconnect confirmation and tool guidance protects approval codes', async t => {
+  const fixture = accountFixture({ confirmReconnect: () => { throw new Error('First connection must not request confirmation.'); } });
+  t.after(() => fixture.account.close());
+  assert.equal((await fixture.account.callTool('connect_account', {})).structuredContent.status, 'pending');
+  assert.match(CONNECT_ACCOUNT_TOOL.description, /explicit user request/);
+  assert.match(CONNECT_ACCOUNT_TOOL.description, /only to the user/);
+  assert.match(CONNECT_ACCOUNT_TOOL.description, /never pass it to any other tool/i);
+});
+
 test('reconnect replaces the approved account and requires a new approval before any business call', async t => {
   const fixture = accountFixture(); t.after(() => fixture.account.close());
   await fixture.account.callTool('connect_account', {});
   fixture.accept(credential(url, 'First Account')); await settle();
-  await fixture.account.callTool('connect_account', { action: 'reconnect' });
+  await fixture.account.callTool('connect_account', { action: 'reconnect', confirm: true });
   assert.equal((await fixture.account.callTool('list_projects', {})).structuredContent.error.code, 'AUTH_REQUIRED');
   fixture.accept(credential(url, 'Second Account')); await settle();
   const state = await fixture.account.callTool('connect_account', { action: 'status' });
@@ -273,7 +363,7 @@ test('concurrent reconnects cannot let an earlier credential save overwrite the 
   t.after(() => account.close());
   await account.callTool('connect_account', {});
   claim(credential(url, 'First Account')); await settle();
-  const reconnect = account.callTool('connect_account', { action: 'reconnect' });
+  const reconnect = account.callTool('connect_account', { action: 'reconnect', confirm: true });
   await settle(); assert.equal(registrations, 1);
   assert.equal((await account.callTool('create_project', { name: 'Must not use the previous account' })).structuredContent.error.code, 'AUTH_REQUIRED');
   finishSave(); await reconnect;
@@ -283,9 +373,9 @@ test('concurrent reconnects cannot let an earlier credential save overwrite the 
 });
 
 test('revoked authorization is rejected once and does not silently retry the operation', async t => {
-  let calls = 0, initialized = 0;
+  let calls = 0, initialized = 0, removed = 0;
   const account = new AccountService({}, {
-    store: { load: async () => credential(), save: async () => ({ persisted: true }) },
+    store: { load: async () => credential(), save: async () => ({ persisted: true }), remove: async () => { removed++; } },
     remote: { initialize: async () => { initialized++; }, close: async () => {}, callTool: async () => {
       calls++; return { isError: true, content: [], structuredContent: { error: { code: 'AUTH_REQUIRED' } } };
     } },
@@ -295,6 +385,7 @@ test('revoked authorization is rejected once and does not silently retry the ope
   assert.equal((await account.callTool('create_project', { name: 'Revoked' })).structuredContent.error.code, 'AUTH_REQUIRED');
   assert.equal(calls, 1);
   assert.equal(initialized, 1);
+  assert.equal(removed, 0);
 });
 
 test('foreground setup reports when approval can only be kept for the current session', async () => {
@@ -307,7 +398,7 @@ test('foreground setup reports when approval can only be kept for the current se
   await account.close();
 });
 
-async function httpFixture(t) {
+async function httpFixture(t, requestedScopes = scopes) {
   let registrations = 0, polls = 0, requests = 0;
   const calls = [];
   let endpoint;
@@ -318,12 +409,12 @@ async function httpFixture(t) {
     if (req.url === '/api/mcp/pairings') {
       registrations++;
       assert.equal(req.headers.authorization, undefined);
-      assert.deepEqual(body.scopes, scopes);
+      assert.deepEqual(body.scopes, requestedScopes);
       res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ data: issue(Date.now(), endpoint) })); return;
     }
     if (req.url === '/api/mcp/pairings/poll') {
       polls++; assert.deepEqual(body, { deviceCode });
-      res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ data: approved(endpoint) })); return;
+      res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ data: { ...approved(endpoint), token: { ...approved(endpoint).token, scopes: requestedScopes } } })); return;
     }
     if (req.headers.authorization !== `Bearer ${secret}`) { res.writeHead(401); res.end('untrusted ' + secret); return; }
     if (req.method !== 'POST') { res.writeHead(405); res.end(); return; }
@@ -338,8 +429,9 @@ async function httpFixture(t) {
   const env = { ...cleanEnv(), PM_MCP_URL: endpoint.href, PM_MCP_ALLOW_INSECURE_LOOPBACK: '1', PM_MCP_STATE_DIR: await directory(t) };
   return { env, calls, registrations: () => registrations, polls: () => polls, requests: () => requests };
 }
-async function stdio(t, env) {
-  const client = new Client({ name: 'pairing-stdio-test', version: '1.0.0' });
+async function stdio(t, env, elicitation) {
+  const client = new Client({ name: 'pairing-stdio-test', version: '1.0.0' }, elicitation ? { capabilities: { elicitation: { form: {} } } } : {});
+  if (elicitation) client.setRequestHandler(ElicitRequestSchema, elicitation);
   const transport = new StdioClientTransport({ command: process.execPath, args: [cli], env, stderr: 'pipe' });
   let stderr = ''; transport.stderr?.on('data', chunk => { stderr += chunk.toString(); });
   t.after(() => client.close());
@@ -377,6 +469,29 @@ test('stdio starts without credentials, pairs in the background, and reuses a sa
   assert.equal(first.stderr() + second.stderr(), '');
 });
 
+test('stdio uses host elicitation before replacing a stored account and preserves it on decline', { timeout: 10_000 }, async t => {
+  const fixture = await httpFixture(t);
+  await new CredentialStore(new URL(fixture.env.PM_MCP_URL), fixture.env).save(credential(new URL(fixture.env.PM_MCP_URL)));
+  let confirmed = false, prompts = 0;
+  const host = await stdio(t, fixture.env, async request => {
+    prompts++;
+    assert.equal(request.params.mode, 'form');
+    assert.deepEqual(request.params.requestedSchema.required, ['confirm']);
+    assert.equal(request.params.requestedSchema.properties.confirm.type, 'boolean');
+    assert.equal(request.params.requestedSchema.properties.confirm.default, false);
+    return { action: 'accept', content: { confirm: confirmed } };
+  });
+  const denied = await host.client.callTool({ name: 'connect_account', arguments: { action: 'reconnect', confirm: true } });
+  assert.equal(denied.structuredContent.status, 'reconnect_cancelled');
+  assert.equal(fixture.registrations(), 0);
+  await host.client.callTool({ name: 'list_projects', arguments: {} });
+  assert.equal(fixture.calls.length, 1);
+  confirmed = true;
+  assert.equal((await host.client.callTool({ name: 'connect_account', arguments: { action: 'reconnect' } })).structuredContent.status, 'pending');
+  assert.equal(fixture.registrations(), 1);
+  assert.equal(prompts, 2);
+});
+
 test('interactive setup shows code and link, remembers approval, and never calls a business tool', { timeout: 15_000 }, async t => {
   const fixture = await httpFixture(t);
   const output = await run(process.execPath, [cli, '--setup'], { env: fixture.env, timeout: 10_000 });
@@ -390,6 +505,17 @@ test('interactive setup shows code and link, remembers approval, and never calls
   assert.doesNotMatch(again.stdout, /Enter code/);
   assert.equal(fixture.registrations(), 1);
   assert.equal(fixture.calls.length, 0);
+});
+
+test('setup --read-only requests and persists only kanban:read', { timeout: 10_000 }, async t => {
+  const fixture = await httpFixture(t, ['kanban:read']);
+  const output = await run(process.execPath, [cli, '--setup', '--read-only'], { env: fixture.env, timeout: 8000 });
+  assert.match(output.stdout, /No tool operation was submitted/);
+  assert.equal(output.stderr, '');
+  const stored = await new CredentialStore(new URL(fixture.env.PM_MCP_URL), fixture.env).load();
+  assert.deepEqual(stored.scopes, ['kanban:read']);
+  assert.equal(fixture.calls.length, 0);
+  assert.equal(fixture.registrations(), 1);
 });
 
 test('pairing HTTP redirects cannot forward the polling secret', async t => {

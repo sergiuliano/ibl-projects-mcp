@@ -1,6 +1,7 @@
 import { constants } from 'node:fs';
-import { open } from 'node:fs/promises';
-import { isAbsolute } from 'node:path';
+import { open, realpath } from 'node:fs/promises';
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export class BridgeError extends Error {
   constructor(readonly code: string, message: string) {
@@ -37,6 +38,14 @@ export async function accessToken(env: NodeJS.ProcessEnv): Promise<string> {
   const path = env.PM_MCP_TOKEN_FILE;
   if (!path) throw new BridgeError('CONFIG_ERROR', 'Set PM_MCP_TOKEN or PM_MCP_TOKEN_FILE to a user token created in IBL Projects.');
   if (!isAbsolute(path)) throw new BridgeError('CONFIG_ERROR', 'PM_MCP_TOKEN_FILE must be an absolute path outside this repository.');
+  let resolvedPath: string, packageRoot: string;
+  try {
+    [resolvedPath, packageRoot] = await Promise.all([realpath(path), realpath(resolve(dirname(fileURLToPath(import.meta.url)), '..'))]);
+  } catch {
+    throw new BridgeError('CONFIG_ERROR', 'Cannot read the token file. Check its location, ownership, permissions, and that it is not a symlink.');
+  }
+  const distance = relative(packageRoot, resolvedPath);
+  if (!distance || (!distance.startsWith(`..${sep}`) && !isAbsolute(distance))) throw new BridgeError('CONFIG_ERROR', 'PM_MCP_TOKEN_FILE must be an absolute path outside this repository.');
   return validateToken(await readPrivateFile(path));
 }
 

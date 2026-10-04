@@ -61,6 +61,21 @@ export class CredentialStore {
       throw new BridgeError('CREDENTIAL_STORE_UNSAFE', 'Saved account credentials could not be read safely. Check the private directory and file permissions, or connect again for this session.');
     }
   }
+  async remove(): Promise<void> {
+    if (!await this.directoryReady(false)) return;
+    try {
+      // Refuse unsafe files rather than following a link or changing its target.
+      await readPrivateFile(this.path);
+      await unlink(this.path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      // readPrivateFile deliberately redacts underlying filesystem errors, so
+      // distinguish an absent credential without exposing its private path.
+      try { await lstat(this.path); }
+      catch (inspection) { if ((inspection as NodeJS.ErrnoException).code === 'ENOENT') return; }
+      throw new BridgeError('CREDENTIAL_STORE_UNSAFE', 'Saved account credentials could not be removed safely. Check the private directory and file permissions.');
+    }
+  }
   async save(value: Credential): Promise<Persistence> {
     if (!this.supported) return { persisted: false, notice: 'Connected for this session. Secure credential files are unavailable on this platform; approve a new code after restarting the client.' };
     let temporary: string | undefined;

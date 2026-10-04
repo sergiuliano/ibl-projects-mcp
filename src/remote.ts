@@ -56,6 +56,13 @@ export class RemoteService {
     try {
       await client.connect(new StreamableHTTPClientTransport(url, {
         requestInit: { headers: { Authorization: `Bearer ${token}` }, redirect: 'error' },
+        // The SDK's standalone SSE GET does not inherit requestInit.
+        fetch: async (requestUrl, init) => {
+          if (new URL(requestUrl).origin !== url.origin) {
+            throw new BridgeError('REMOTE_CONNECTION_FAILED', 'Hosted MCP requests must stay on the configured endpoint origin.');
+          }
+          return fetch(requestUrl, { ...init, redirect: 'error' });
+        },
       }));
       const tools: Tool[] = [];
       let cursor: string | undefined;

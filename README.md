@@ -9,12 +9,27 @@ This client requires an MCP-enabled IBL Projects server with account pairing ena
 Follow [the installation guide](docs/install.md). Installation uses a source checkout, Node.js, and npm. The package is not published to npm.
 
 ```sh
-git clone https://github.com/sergiuliano/ibl-projects-mcp.git
+git clone --branch v0.3.0 --depth 1 https://github.com/sergiuliano/ibl-projects-mcp.git
 cd ibl-projects-mcp
 npm ci
 npm run build
 node dist/cli.js --setup
 ```
+
+Installation targets release `v0.3.0`. Use these commands only after the owner has published that release. Unsigned lightweight tags cannot be verified by this procedure; the owner must create and publish a signed release tag before the update procedure below can succeed.
+
+To update, verify the specific release tag before checking it out or building:
+
+```sh
+git fetch origin tag v0.3.0 &&
+git verify-tag v0.3.0 &&
+git checkout --detach v0.3.0 &&
+npm ci &&
+npm run build &&
+node dist/cli.js --setup
+```
+
+Stop if fetching or signature verification fails, including when the tag is absent, unsigned, or signed by a key you do not trust. Confirm the signing key with the repository owner through a trusted channel. Restart your MCP connection after a successful update.
 
 `--setup` shows the approval code, waits for browser approval, and verifies authentication and the shared tool contract. It never calls a project tool. You can instead add the client directly to your MCP host and use `connect_account` there. Stdio initialization does not wait for account approval.
 
