@@ -28,13 +28,14 @@ export function verifyCatalog(actual: Tool[]): void {
   const expected = new Map(TOOL_DEFINITIONS.map(tool => [tool.name, tool]));
   const names = new Set(actual.map(tool => tool.name));
   if (actual.length !== expected.size || names.size !== expected.size || actual.some(tool => !expected.has(tool.name))) {
-    throw new BridgeError('REMOTE_CONTRACT_MISMATCH', 'The hosted MCP tool list differs from this client. Install a compatible client before submitting work.');
+    throw new BridgeError('REMOTE_CONTRACT_MISMATCH', `The hosted MCP tool list differs from client ${MCP_VERSION}. Install the compatible signed release from https://maddots.app/docs/mcp and restart the MCP connection. No project operation was submitted.`);
   }
   for (const tool of actual) {
     const local = expected.get(tool.name)!;
-    if (JSON.stringify(canonical(local.inputSchema)) !== JSON.stringify(canonical(tool.inputSchema)) ||
-        JSON.stringify(canonical(local.outputSchema)) !== JSON.stringify(canonical(tool.outputSchema))) {
-      throw new BridgeError('REMOTE_CONTRACT_MISMATCH', 'The hosted MCP tool schemas differ from this client. Install a compatible client before submitting work.');
+    for (const schema of ['inputSchema', 'outputSchema'] as const) {
+      if (JSON.stringify(canonical(local[schema])) !== JSON.stringify(canonical(tool[schema]))) {
+        throw new BridgeError('REMOTE_CONTRACT_MISMATCH', `The hosted MCP schemas differ for ${local.name} (${schema}) from client ${MCP_VERSION}. Install the compatible signed release from https://maddots.app/docs/mcp and restart the MCP connection. No project operation was submitted.`);
+      }
     }
   }
 }

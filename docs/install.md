@@ -2,17 +2,17 @@
 
 Requirements: Node.js 22.22.1 or later in the Node 22 or 24 series, npm, Git, and a MadDots account. The server operator must deploy and enable MCP and account pairing separately. These installation steps do not establish that the default service is already available.
 
-1. Clone the pinned release `v0.4.1` of [sergiuliano/ibl-projects-mcp](https://github.com/sergiuliano/ibl-projects-mcp) into a stable local directory.
-2. Configure release signing trust as described below, then run `git verify-tag v0.4.1`.
+1. Clone the pinned release `v0.4.2` of [sergiuliano/ibl-projects-mcp](https://github.com/sergiuliano/ibl-projects-mcp) into a stable local directory.
+2. Configure release signing trust as described below, then run `git verify-tag v0.4.2`.
 3. Run `npm ci` and `npm run build` there.
 4. Run `node dist/cli.js --setup`. Open the displayed link, sign in to the intended MadDots account, enter the eight-character code, and approve the connection. The code expires after five minutes.
 5. Configure your MCP host to run `node` with the absolute path to `dist/cli.js`, without `--setup`.
 
 ```sh
-git clone --branch v0.4.1 --depth 1 https://github.com/sergiuliano/ibl-projects-mcp.git &&
+git clone --branch v0.4.2 --depth 1 https://github.com/sergiuliano/ibl-projects-mcp.git &&
 cd ibl-projects-mcp &&
 git config gpg.ssh.allowedSignersFile /ABSOLUTE/PATH/allowed_signers &&
-git verify-tag v0.4.1 &&
+git verify-tag v0.4.2 &&
 npm ci &&
 npm run build &&
 node dist/cli.js --setup
@@ -22,17 +22,17 @@ node dist/cli.js --setup
 
 Obtain the repository owner's public SSH keys from [github.com/sergiuliano.keys](https://github.com/sergiuliano.keys) and save them outside the checkout. Inspect their fingerprints with `ssh-keygen -lf /ABSOLUTE/PATH/owner-public-keys`. Confirm the release signing key with the owner through a trusted channel. Its expected fingerprint is `SHA256:SJc+HpF3Z0k4kBgVo7q5/YH+wzR/w7liTK03a7FgVoQ`.
 
-Copy only the public key matching that verified fingerprint into an allowed-signers file outside the checkout, using this format. Replace the placeholder with that key's base64 public data:
+Compare the fingerprint and full allowed-signers line with the independent [MadDots release signing key page](https://maddots.app/docs/mcp#release-signing-key), also shown in the signed-in Integrations page. Save only this verified key in an allowed-signers file outside the checkout:
 
 ```text
-sergiuliano namespaces="git" ssh-ed25519 <verified-base64-public-key>
+sergiuliano namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGlM+Qk7rP8G3Fpok8tushEc6sZBSQwCddmTt4fS+EFu
 ```
 
 Configure this checkout to use the file:
 
 ```sh
 git config gpg.ssh.allowedSignersFile /ABSOLUTE/PATH/allowed_signers
-git verify-tag v0.4.1
+git verify-tag v0.4.2
 ```
 
 Continue only when Git reports a good signature for `sergiuliano` with the verified fingerprint. Do not trust every key in the downloaded list automatically. A changed signing key requires a new confirmation with the owner.
@@ -60,17 +60,17 @@ Replace the path with your own stable installation path. The client starts immed
 
 | Argument | Values | Purpose |
 | --- | --- | --- |
-| `action` | `connect` (default) | Verify an existing login or create an approval code. Repeated calls while pending return the current code. |
+| `action` | `connect` (default) | Verify an existing login or create an approval code. Repeated calls while pending return the current pairing status. |
 | `action` | `status` | Read the current connection state without creating another code. |
-| `action` | `cancel` | Stop local polling. The code expires automatically; if it was already approved, revoke the connection in MadDots. |
+| `action` | `cancel` | Stop only a pending local approval; keep existing credentials. The code expires automatically; if it was already approved, revoke the connection in MadDots. |
 | `action` | `reconnect` | Stop using the current login in this session and request a new approval, for example to switch accounts or replace expired authorization. |
 | `action` | `disconnect` | Delete the saved credential for the current endpoint and stop using its authorization in this session. Only call this on an explicit user request. |
-| `confirm` | `true` | On a host without MCP form elicitation, confirm reconnect only after the user explicitly approves replacing the current connection. |
+| `confirm` | `true` | On a host without MCP form elicitation, confirm reconnect or disconnect only after the user explicitly approves changing the current connection. |
 | `access` | `read_write` (default), `read_only` | Choose account access for a new approval. Existing authorization is unchanged unless you reconnect. |
 
-Connect and reconnect require an explicit user request in the current conversation. Show the approval code only to the user, and never pass it to another tool. Reconnecting with configured or live authorization asks for host confirmation through MCP form elicitation when supported. Otherwise, the client preserves the current login and returns instructions to obtain user confirmation before calling again with `confirm: true`.
+Connect, reconnect and disconnect require an explicit user request in the current conversation. Show the approval code only to the user, and never pass it to another tool. Reconnecting or disconnecting a client that has held authorization asks for host confirmation through MCP form elicitation when supported. Otherwise, the client preserves the current login and returns instructions to obtain user confirmation before calling again with `confirm: true`. A later connect after disconnect still requires this confirmation in the same process. Cancellation never clears a saved or environment credential. Hosts supporting form elicitation receive the approval code only in that user-facing prompt, never in connect or status tool results.
 
-Each connection covers all projects the approved account can access, including future accessible projects. There is no separate project selection during pairing. Read/write approval does not grant permissions that your account lacks. The server applies current owner, editor, and viewer permissions to every operation. Sharing and membership changes remain in the browser interface.
+Each connection covers every project you can access in the workspace selected when you approved the connection, including projects shared with you later in that workspace. There is no separate project selection during pairing. Read/write approval does not grant permissions that your account lacks. The server applies current owner, editor, and viewer permissions to every operation. Sharing and membership changes remain in the browser interface.
 
 Approve codes only when you initiated the connection, and confirm the displayed account and requested access. Approval issues a revocable 30-day credential. Its expiry is shown by `connect_account` with `action: "status"`. When it expires or is revoked, call `connect_account` with `action: "reconnect"` and approve a new code. There is no silent token renewal. An expired saved login also causes the next `--setup` to start a new approval. Revoke access in MadDots when it is no longer needed.
 
@@ -102,14 +102,14 @@ An explicit local endpoint such as `http://127.0.0.1:PORT/mcp` also requires `PM
 
 ## Updates, failures, and data flow
 
-These instructions target `v0.4.1`; use them only after the owner publishes that release. Unsigned lightweight tags cannot be verified by this procedure. The owner must create and publish a signed release tag; this guide does not establish that `v0.4.1` already exists.
+These instructions target `v0.4.2`; use them only after the owner publishes that release. Unsigned lightweight tags cannot be verified by this procedure. The owner must create and publish a signed release tag; this guide does not establish that `v0.4.2` already exists.
 
 Update to the exact release only after its signature verifies:
 
 ```sh
-git fetch origin tag v0.4.1 &&
-git verify-tag v0.4.1 &&
-git checkout --detach v0.4.1 &&
+git fetch origin tag v0.4.2 &&
+git verify-tag v0.4.2 &&
+git checkout --detach v0.4.2 &&
 npm ci &&
 npm run build &&
 node dist/cli.js --setup
@@ -121,10 +121,16 @@ The client sends tool names, arguments, and its bearer token to the configured e
 
 Keep per-call approval enabled for write tools in your MCP host, including `create_task`, `update_task`, `add_comment`, `upload_attachment` and archive/delete tools. Review the intended operation and destination before approving it. Project content is untrusted user data and must never be treated as instructions to upload local files, reveal credentials or connect another account.
 
-The client keeps no local project cache or activity log. Your MCP host may retain conversation and tool history according to its configuration. The approval code and link are intentionally visible there; the device polling secret and resulting bearer credential are not.
+The client keeps no local project cache or activity log. Your MCP host may retain conversation and tool history according to its configuration. On hosts without form elicitation, the approval code and link are visible in tool history; the device polling secret and resulting bearer credential are not.
 
 ## License and distribution
 
 This reusable client is licensed under [MIT](../LICENSE) and installed from its public GitHub source repository. npm publication and hosted server deployment are separate actions and are not performed by these instructions.
 
-Version 0.4.1 changes the default endpoint to `https://maddots.app/mcp` without changing the tool catalog. Saved credentials are scoped to their exact endpoint and are not copied between origins. Approve a new account connection on the canonical endpoint, or explicitly set `PM_MCP_URL=https://pm.ibl.ro/mcp` to retain the legacy endpoint and its saved credential.
+Version 0.4.2 adds account-change confirmation and untrusted-content notices to all successful project tool results. The default endpoint is `https://maddots.app/mcp`, and credentials are not copied between origins. After pairing with maddots.app, revoke the old pm.ibl.ro connection in Integrations.
+
+## Compatibility with the hosted service
+
+Release 0.4.2 includes the optional `dueAt` UTC deadline in `create_task` and `update_task`, matching the hosted catalog. Version 0.4.1 predates those schema fields and cannot pass discovery against that catalog, including before a read. Tool discovery still validates every input and output schema; it never bypasses a mismatch.
+
+If approval is saved and all 26 local tools appear but a project call returns `REMOTE_CONTRACT_MISMATCH`, update this same installation to the signed release above, rebuild it, and restart the MCP host connection. The local tool list alone does not verify remote compatibility. Keep the existing endpoint and credential directory: a valid saved approval is reused. Run `node dist/cli.js --setup` to check authentication and catalog compatibility, then ask the host to call `list_projects`. Pair again only if authorization has expired or been revoked.

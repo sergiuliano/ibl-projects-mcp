@@ -162,7 +162,7 @@ test('credential files reject unsafe permissions, symlinks, corrupt state and in
   assert.throws(() => new CredentialStore(url, { PM_MCP_STATE_DIR: resolve(dirname(cli), '../credentials') }), /outside/);
 });
 
-test('disconnect deletes only the credential for the selected endpoint and is idempotent', async t => {
+test('confirmed disconnect deletes only the credential for the selected endpoint and is idempotent', async t => {
   const env = { PM_MCP_STATE_DIR: await directory(t) };
   const current = new CredentialStore(url, env);
   const otherUrl = new URL('https://example.test/other-mcp');
@@ -172,11 +172,13 @@ test('disconnect deletes only the credential for the selected endpoint and is id
   const selected = new AccountService({ ...env, PM_MCP_URL: url.href }, { remote: { initialize: async () => {}, close: async () => {}, callTool: async () => ({ content: [] }) } });
   t.after(() => selected.close());
   await selected.callTool('list_projects', {});
-  assert.equal((await selected.callTool('connect_account', { action: 'disconnect' })).structuredContent.status, 'disconnected');
+  assert.equal((await selected.callTool('connect_account', { action: 'disconnect' })).structuredContent.status, 'confirmation_required');
+  assert.equal((await current.load()).secret, secret);
+  assert.equal((await selected.callTool('connect_account', { action: 'disconnect', confirm: true })).structuredContent.status, 'disconnected');
   assert.equal(await current.load(), undefined);
   assert.equal((await other.load()).secret, secret);
   assert.equal((await selected.callTool('list_projects', {})).structuredContent.error.code, 'AUTH_REQUIRED');
-  assert.equal((await selected.callTool('connect_account', { action: 'disconnect' })).structuredContent.status, 'disconnected');
+  assert.equal((await selected.callTool('connect_account', { action: 'disconnect', confirm: true })).structuredContent.status, 'disconnected');
   assert.match(CONNECT_ACCOUNT_TOOL.description, /disconnect.*explicit user request/i);
 });
 
@@ -191,7 +193,7 @@ test('disconnect waits for an already claimed credential save before removing it
   });
   t.after(() => account.close());
   await account.callTool('connect_account', {}); await settle();
-  const disconnect = account.callTool('connect_account', { action: 'disconnect' });
+  const disconnect = account.callTool('connect_account', { action: 'disconnect', confirm: true });
   await settle(); assert.deepEqual(events, []);
   finishSave();
   assert.equal((await disconnect).structuredContent.status, 'disconnected');
@@ -258,7 +260,7 @@ test('unconnected business calls do not dispatch and repeated connect calls shar
   fixture.accept(credential()); await settle();
   const connected = await fixture.account.callTool('connect_account', { action: 'status' });
   assert.equal(connected.structuredContent.status, 'connected'); safeOutput(connected);
-  assert.match(connected.structuredContent.accountAccess, /all projects/);
+  assert.match(connected.structuredContent.accountAccess, /every project.*workspace selected/);
   assert.equal(fixture.saved.length, 1);
   await fixture.account.callTool('list_projects', {});
   assert.equal(fixture.calls.length, 1);
@@ -474,6 +476,7 @@ test('stdio uses host elicitation before replacing a stored account and preserve
   await new CredentialStore(new URL(fixture.env.PM_MCP_URL), fixture.env).save(credential(new URL(fixture.env.PM_MCP_URL)));
   let confirmed = false, prompts = 0;
   const host = await stdio(t, fixture.env, async request => {
+    if (request.params.requestedSchema.required.includes('acknowledged')) { assert.match(request.params.message, /ABCD2345/); return { action: 'accept', content: { acknowledged: true } }; }
     prompts++;
     assert.equal(request.params.mode, 'form');
     assert.deepEqual(request.params.requestedSchema.required, ['confirm']);

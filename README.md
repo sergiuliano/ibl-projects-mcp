@@ -1,31 +1,31 @@
 # MadDots MCP client
 
-Connect an MCP host to your MadDots account through a local stdio client. Ask the host to call `connect_account`, open the returned browser link, and approve the eight-character code in MadDots. You do not need to copy a token. The client returns the code immediately and checks for approval in the background for up to five minutes.
+Connect an MCP host to your MadDots account through a local stdio client. Ask the host to call `connect_account`, open the returned browser link, and approve the eight-character code in MadDots. You do not need to copy a token. The client shows the code through host form elicitation when supported, keeping it out of tool results; otherwise it returns the code to your MCP host. It checks for approval in the background for up to five minutes.
 
-The approved connection covers all projects your account can access, including future accessible projects. You can request read-only or read/write account access; the server continues to enforce your current project permissions. Sharing and membership administration stay in the MadDots interface.
+The approved connection covers every project you can access in the workspace selected when you approved the connection, including projects shared with you later in that workspace. You can request read-only or read/write account access; the server continues to enforce your current project permissions. Sharing and membership administration stay in the MadDots interface.
 
 This client requires an MCP-enabled MadDots server with account pairing enabled. The default endpoint is `https://maddots.app/mcp`; availability depends on the operator's separate server deployment. Publishing or installing this client does not deploy or enable that service. The application server, database, private implementation, and deployment configuration are not included.
 
 Follow [the installation guide](docs/install.md). Installation uses a source checkout, Node.js, and npm. The package is not published to npm. Configure [release signing trust](docs/install.md#trust-the-release-signing-key) before verifying the tag or installing dependencies.
 
 ```sh
-git clone --branch v0.4.1 --depth 1 https://github.com/sergiuliano/ibl-projects-mcp.git &&
+git clone --branch v0.4.2 --depth 1 https://github.com/sergiuliano/ibl-projects-mcp.git &&
 cd ibl-projects-mcp &&
 git config gpg.ssh.allowedSignersFile /ABSOLUTE/PATH/allowed_signers &&
-git verify-tag v0.4.1 &&
+git verify-tag v0.4.2 &&
 npm ci &&
 npm run build &&
 node dist/cli.js --setup
 ```
 
-Installation targets release `v0.4.1`. Use these commands only after the owner has published that release. Unsigned lightweight tags cannot be verified by this procedure; the owner must create and publish a signed release tag before the update procedure below can succeed.
+Installation targets release `v0.4.2`. Use these commands only after the owner has published that release. Unsigned lightweight tags cannot be verified by this procedure; the owner must create and publish a signed release tag before the update procedure below can succeed.
 
 To update, verify the specific release tag before checking it out or building:
 
 ```sh
-git fetch origin tag v0.4.1 &&
-git verify-tag v0.4.1 &&
-git checkout --detach v0.4.1 &&
+git fetch origin tag v0.4.2 &&
+git verify-tag v0.4.2 &&
+git checkout --detach v0.4.2 &&
 npm ci &&
 npm run build &&
 node dist/cli.js --setup
@@ -47,4 +47,10 @@ When automation tags the account owner, the owner receives the Inbox item even t
 
 Run `npm test` and `npm run pack:check` for development checks. Tests use synthetic credentials and isolated local fixtures. The reusable client is available under the [MIT License](LICENSE). The package's `private: true` setting prevents accidental npm publication; it does not restrict use under that license. Hosted service access remains subject to account and project permissions.
 
-Version 0.4.1 uses the canonical `https://maddots.app/mcp` endpoint by default. Existing credentials remain scoped to the endpoint where they were approved. Connect again for the canonical endpoint, or set `PM_MCP_URL=https://pm.ibl.ro/mcp` to keep using the legacy endpoint. The tool catalog is unchanged by this patch.
+Version 0.4.2 requires confirmation for reconnect and disconnect, preserves existing credentials when cancelling a pending approval, and identifies user content in all successful project tool results. The default endpoint remains `https://maddots.app/mcp`; saved credentials stay scoped to their approved endpoint. After pairing with maddots.app, revoke the old pm.ibl.ro connection in Integrations.
+
+## Compatibility with the hosted service
+
+Release 0.4.2 includes the optional `dueAt` UTC deadline in `create_task` and `update_task`, matching the hosted catalog. Version 0.4.1 predates those schema fields and cannot pass discovery against that catalog, including before a read. Tool discovery still validates every input and output schema; it never bypasses a mismatch.
+
+If approval is saved and all 26 local tools appear but a project call returns `REMOTE_CONTRACT_MISMATCH`, update this same installation to the signed release above, rebuild it, and restart the MCP host connection. The local tool list alone does not verify remote compatibility. Keep the existing endpoint and credential directory: a valid saved approval is reused. Run `node dist/cli.js --setup` to check authentication and catalog compatibility, then ask the host to call `list_projects`. Pair again only if authorization has expired or been revoked.

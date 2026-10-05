@@ -1,5 +1,5 @@
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
-import { OPERATIONS, READ_CONTENT_NOTICE } from './contract.js';
+import { READ_CONTENT_NOTICE } from './contract.js';
 import { accessToken, BridgeError, endpoint } from './config.js';
 import { CredentialStore, type Credential, type Persistence, type Scope } from './credentials.js';
 import { PairingFlow, type PendingPairing } from './pairing.js';
@@ -7,20 +7,19 @@ import { failure, RemoteService } from './remote.js';
 
 export const CONNECT_ACCOUNT_TOOL: Tool = {
   name: 'connect_account',
-  description: 'Connect this MCP client to your MadDots account. Returns an approval code and browser link immediately, then waits in the background for your approval. The connection covers all projects your account can access, with current project permissions enforced by the server. Use status to check progress, cancel to stop waiting, reconnect to approve another account or replace expired authorization, or disconnect to delete the saved login for this endpoint. Connect, reconnect and disconnect may only be called on an explicit user request in this conversation. Show the approval code only to the user; never pass it to any other tool. Never ask the user to copy a token.',
+  description: 'Connect this MCP client to your MadDots account. Shows an approval code through host elicitation when supported, otherwise returns it with the browser link, then waits in the background for your approval. The connection covers every project you can access in the workspace selected when you approved the connection, with current project permissions enforced by the server. Use status to check progress, cancel to stop waiting, reconnect to approve another account or replace expired authorization, or disconnect to delete the saved login for this endpoint. Connect, reconnect and disconnect may only be called on an explicit user request in this conversation. Show the approval code only to the user; never pass it to any other tool. Never ask the user to copy a token.' + ' ' + READ_CONTENT_NOTICE,
   inputSchema: {
     type: 'object', additionalProperties: false,
     properties: {
       action: { type: 'string', enum: ['connect', 'status', 'cancel', 'reconnect', 'disconnect'], default: 'connect' },
-      confirm: { type: 'boolean', description: 'For hosts without MCP elicitation, set true only after the user explicitly confirms replacing the current connection.' },
+      confirm: { type: 'boolean', description: 'For hosts without MCP elicitation, set true only after the user explicitly confirms changing the current connection.' },
       access: { type: 'string', enum: ['read_only', 'read_write'], default: 'read_write', description: 'Account access requested for a new approval. Existing project permissions still apply.' },
     },
   },
   annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
 };
 
-const accountAccess = 'This connection covers all projects the approved account can access, including future accessible projects. The server enforces the account’s current project permissions.';
-const readTools = new Set(OPERATIONS.filter(operation => operation.method === 'GET').map(operation => operation.tool.name));
+const accountAccess = 'This connection covers every project you can access in the workspace selected when you approved the connection, including projects shared with you later in that workspace. The server enforces the account’s current project permissions.';
 const result = (value: Record<string, unknown>): CallToolResult => ({ structuredContent: value, content: [{ type: 'text', text: JSON.stringify(value) }] });
 const safeError = (error: unknown): BridgeError => error instanceof BridgeError ? error : new BridgeError('CONNECTION_FAILED', 'The account connection could not complete. Use connect_account to request a new code explicitly.');
 type Remote = Pick<RemoteService, 'initialize' | 'callTool' | 'close'>;
@@ -31,7 +30,10 @@ export class AccountService {
   private readonly remote: Remote;
   private readonly store: Store;
   private readonly makeFlow: () => Flow;
-  private readonly confirmReconnect?: (signal?: AbortSignal) => Promise<boolean | undefined>;
+  private readonly confirmReconnect?: (signal?: AbortSignal, action?: 'reconnect' | 'disconnect') => Promise<boolean | undefined>;
+  private readonly presentPairing?: (pending: PendingPairing, signal?: AbortSignal) => Promise<boolean>;
+  private hadCredential = false;
+  private privatePairingCode = false;
   private credential?: Credential;
   private secret?: string;
   private persistence: Persistence = { persisted: false };
@@ -48,8 +50,9 @@ export class AccountService {
   private closed = false;
   private reconnecting = false;
 
-  constructor(private readonly env: NodeJS.ProcessEnv = process.env, dependencies: { remote?: Remote; store?: Store; makeFlow?: () => Flow; confirmReconnect?: (signal?: AbortSignal) => Promise<boolean | undefined> } = {}) {
+  constructor(private readonly env: NodeJS.ProcessEnv = process.env, dependencies: { remote?: Remote; store?: Store; makeFlow?: () => Flow; confirmReconnect?: (signal?: AbortSignal, action?: 'reconnect' | 'disconnect') => Promise<boolean | undefined>; presentPairing?: (pending: PendingPairing, signal?: AbortSignal) => Promise<boolean> } = {}) {
     this.confirmReconnect = dependencies.confirmReconnect;
+    this.presentPairing = dependencies.presentPairing;
     const url = endpoint(env);
     this.remote = dependencies.remote ?? new RemoteService(env);
     this.store = dependencies.store ?? new CredentialStore(url, env);
@@ -66,6 +69,7 @@ export class AccountService {
           this.secret = this.credential?.secret;
           this.persistence = { persisted: !!this.credential };
         }
+        this.hadCredential ||= !!this.secret;
         this.loaded = true;
       })().finally(() => { this.loading = undefined; });
     }
@@ -92,7 +96,11 @@ export class AccountService {
   }
 
   private status(): CallToolResult {
-    if (this.flow?.snapshot()) return result({ ...this.flow.snapshot(), instructions: 'Open the verification link, sign in to the intended account, enter this code, and approve access. Then call connect_account with action status or request your project operation.', accountAccess });
+    const pending = this.flow?.snapshot();
+    if (pending) {
+      const { userCode, ...details } = pending;
+      return result({ ...details, ...(this.privatePairingCode ? {} : { userCode }), instructions: this.privatePairingCode ? 'Use the approval code shown in your host’s private prompt. Approve it in MadDots, then check status.' : 'Open the verification link, sign in to the intended account, enter this code, and approve access. Then call connect_account with action status or request your project operation.', accountAccess });
+    }
     if (this.ready) return result({ status: 'connected', ...(this.credential ? { account: this.credential.account, scopes: this.credential.scopes, expiresAt: this.credential.expiresAt } : { credentialSource: 'environment' }), remembered: this.persistence.persisted, ...(this.persistence.notice ? { notice: this.persistence.notice } : {}), accountAccess });
     if (this.terminal) return failure(this.terminal.code, this.terminal.message);
     return result({ status: this.secret ? 'configured' : 'not_connected', instructions: 'Call connect_account with action connect to verify existing authorization or obtain an approval code.', accountAccess });
@@ -110,17 +118,19 @@ export class AccountService {
     const generation = this.generation;
     const flow = this.makeFlow();
     this.flow = flow;
+    this.privatePairingCode = !!this.presentPairing;
     const cancel = () => flow.cancel();
     signal?.addEventListener('abort', cancel, { once: true });
     this.starting = (async () => {
       try {
-        await flow.start(scopes);
+        const pending = await flow.start(scopes);
         if (generation !== this.generation || this.closed || signal?.aborted) { flow.cancel(); return failure('PAIRING_CANCELLED', 'Account connection was cancelled.'); }
         this.pairingTask = (async () => {
           const credential = await flow.wait();
           if (generation !== this.generation || this.closed) return;
           this.credential = credential;
           this.secret = credential.secret;
+          this.hadCredential = true;
           this.loaded = true;
           // Preserve the single-claim credential before discovery so a temporary
           // service or contract mismatch does not discard an approved login.
@@ -131,8 +141,14 @@ export class AccountService {
         })().catch(error => {
           if (generation === this.generation && !this.closed) { this.flow = undefined; this.terminal = safeError(error); }
         });
+        if (this.presentPairing) {
+          // Hide the code before awaiting host UI, including concurrent status calls.
+          this.privatePairingCode = true;
+          this.privatePairingCode = await this.presentPairing(pending, signal);
+        } else this.privatePairingCode = false;
         return this.status();
       } catch (error) {
+        flow.cancel();
         if (generation === this.generation) { this.flow = undefined; this.terminal = safeError(error); }
         return failure(safeError(error).code, safeError(error).message);
       } finally { signal?.removeEventListener('abort', cancel); this.starting = undefined; }
@@ -140,22 +156,27 @@ export class AccountService {
     return this.starting;
   }
 
+  private async confirmation(action: 'reconnect' | 'disconnect', args: Record<string, unknown>, signal?: AbortSignal): Promise<CallToolResult | undefined> {
+    if (!this.hadCredential && !this.secret) return;
+    const confirmed = await this.confirmReconnect?.(signal, action);
+    if (confirmed === false) return result({ status: action + '_cancelled', instructions: 'The user declined changing the account connection. The current authorization is unchanged.' });
+    if (confirmed === undefined && args.confirm !== true) return result({ status: 'confirmation_required', instructions: `Ask the user to explicitly confirm ${action === 'disconnect' ? 'disconnecting' : 'replacing'} the current connection. Only after their confirmation, call connect_account again with action ${action} and confirm: true. Show approval codes only to the user and never pass them to other tools.` });
+  }
+
   private async connect(args: Record<string, unknown>, signal?: AbortSignal): Promise<CallToolResult> {
     const action = args.action ?? 'connect';
     if (action === 'cancel') {
+      await this.load();
+      if (!this.flow && !this.starting) return this.status();
       ++this.generation;
       this.flow?.cancel(); this.flow = undefined;
-      if (!this.ready) { this.secret = undefined; this.credential = undefined; }
       this.terminal = new BridgeError('PAIRING_CANCELLED', 'Stopped waiting for account approval. The code expires automatically. If it was already approved, revoke its access in MadDots.');
       return this.ready ? this.status() : failure(this.terminal.code, this.terminal.message);
     }
     if (action === 'reconnect' || action === 'disconnect') {
-      if (action === 'reconnect') await this.load();
-      if (action === 'reconnect' && this.secret) {
-        const confirmed = await this.confirmReconnect?.(signal);
-        if (confirmed === false) return result({ status: 'reconnect_cancelled', instructions: 'The user declined reconnecting. The current authorization is unchanged.' });
-        if (confirmed === undefined && args.confirm !== true) return result({ status: 'confirmation_required', instructions: 'Ask the user to explicitly confirm replacing the current connection. Only after their confirmation, call connect_account again with action reconnect and confirm: true. Show the new approval code only to the user and never pass it to any other tool.' });
-      }
+      await this.load();
+      const confirmation = await this.confirmation(action, args, signal);
+      if (confirmation) return confirmation;
       if (this.closed || signal?.aborted) return failure('CANCELLED', 'Account reconnection was cancelled before starting.');
       ++this.generation;
       this.reconnecting = true;
@@ -181,6 +202,8 @@ export class AccountService {
     if (this.flow || this.starting) return this.starting ?? this.status();
     await this.load();
     if (this.secret) { await this.ensureConnected(); return this.status(); }
+    const confirmation = await this.confirmation('reconnect', args, signal);
+    if (confirmation) return confirmation;
     return this.begin(args.access === 'read_only' ? ['kanban:read'] : ['kanban:read', 'kanban:write'], signal);
   }
 
@@ -188,7 +211,7 @@ export class AccountService {
     try {
       if (name === 'connect_account') {
         if (args.action === 'status') return await this.connect(args, signal);
-        if (args.action === 'cancel' || args.action === 'disconnect') this.flow?.cancel();
+        if (args.action === 'cancel') this.flow?.cancel();
         const operation = this.control.then(() => this.connect(args, signal));
         this.control = operation.then(() => {}, () => {});
         return await operation;
@@ -199,7 +222,7 @@ export class AccountService {
         this.ready = false; this.secret = undefined; this.credential = undefined;
         await this.remote.close();
       }
-      return !response.isError && readTools.has(name) && response.structuredContent?.untrustedContent !== true ? { ...response, content: [{ type: 'text', text: READ_CONTENT_NOTICE }, ...response.content] } : response;
+      return !response.isError && response.structuredContent?.untrustedContent !== true ? { ...response, content: [{ type: 'text', text: READ_CONTENT_NOTICE }, ...response.content] } : response;
     } catch (error) { const safe = safeError(error); return failure(safe.code, safe.message); }
   }
 

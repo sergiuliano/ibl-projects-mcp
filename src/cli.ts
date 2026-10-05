@@ -18,14 +18,23 @@ async function main(): Promise<void> {
   }
   let server: ReturnType<typeof createMcpServer> | undefined;
   const account = new AccountService(process.env, {
-    confirmReconnect: async signal => {
+    confirmReconnect: async (signal, action) => {
       if (!server?.getClientCapabilities()?.elicitation?.form) return undefined;
       const response = await server.elicitInput({
         mode: 'form',
-        message: 'Replace the current MadDots account connection? A new approval code will be required before project operations can continue.',
-        requestedSchema: { type: 'object', properties: { confirm: { type: 'boolean', title: 'Replace current connection', default: false } }, required: ['confirm'] },
+        message: action === 'disconnect' ? 'Disconnect the current MadDots account and delete its saved credential for this endpoint?' : 'Replace the current MadDots account connection? A new approval code will be required before project operations can continue.',
+        requestedSchema: { type: 'object', properties: { confirm: { type: 'boolean', title: action === 'disconnect' ? 'Disconnect current connection' : 'Replace current connection', default: false } }, required: ['confirm'] },
       }, { signal });
       return response.action === 'accept' && response.content?.confirm === true;
+    },
+    presentPairing: async (pending, signal) => {
+      if (!server?.getClientCapabilities()?.elicitation?.form) return false;
+      await server.elicitInput({
+        mode: 'form',
+        message: `Open ${pending.verificationUri} and enter code ${pending.userCode}. Sign in to the intended account and review the requested connection. The code expires at ${pending.expiresAt}.`,
+        requestedSchema: { type: 'object', properties: { acknowledged: { type: 'boolean', title: 'I have seen the approval code', default: false } }, required: ['acknowledged'] },
+      }, { signal });
+      return true;
     },
   });
   let closing = false;
