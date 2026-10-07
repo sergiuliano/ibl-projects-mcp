@@ -25,11 +25,12 @@ export async function runWorker(): Promise<void> {
   digest.update(JSON.stringify(Object.entries(manifest.dependencies || {}).sort(([a], [b]) => a.localeCompare(b))));
   const supervisorDigest = digest.digest('hex');
   const account = new AccountService(process.env, {
+    onCatalogChanged: () => { void server.sendToolListChanged().catch(() => {}); },
     confirmReconnect: async (signal, action) => {
       if (!hostElicitation) return undefined;
       const response = await server.elicitInput({
         mode: 'form',
-        message: action === 'disconnect' ? 'Disconnect the current MadDots account and delete its saved credential for this endpoint?' : 'Replace the current MadDots account connection? A new approval code will be required before project operations can continue.',
+        message: action === 'disconnect' ? 'Disconnect the current MadDots account and delete its saved credential for this endpoint?' : 'Replace the current MadDots account connection? Your current connection stays active until the new approval is verified.',
         requestedSchema: { type: 'object', properties: { confirm: { type: 'boolean', title: action === 'disconnect' ? 'Disconnect current connection' : 'Replace current connection', default: false } }, required: ['confirm'] },
       }, { signal });
       return response.action === 'accept' && response.content?.confirm === true;
@@ -44,7 +45,7 @@ export async function runWorker(): Promise<void> {
       return true;
     },
   });
-  const server = createMcpServer(account, [CONNECT_ACCOUNT_TOOL]);
+  const server = createMcpServer(account, [CONNECT_ACCOUNT_TOOL], undefined, { workspaceAccess: () => account.workspaceAccess() });
   // These methods exist only between the local supervisor and its child. They
   // are not tools and the supervisor never forwards them from the MCP host.
   server.fallbackRequestHandler = async request => {

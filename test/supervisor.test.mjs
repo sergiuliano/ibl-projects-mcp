@@ -177,7 +177,7 @@ test('account safety distinguishes durable, memory-only, disconnected and env-re
   for (const persisted of [true, false]) {
     const complete = deferred();
     const account = new AccountService({ PM_MCP_URL: credential.endpoint }, {
-      remote: remote(), store: { async load() {}, async save() { return { persisted }; }, async remove() {} },
+      makeRemote: remote, store: { async load() {}, async save() { return { persisted }; }, async remove() {} },
       makeFlow: () => ({ async start() { return { status: 'pending', userCode: 'ABCD1234' }; }, snapshot() { return { status: 'pending' }; }, wait: () => complete.promise, cancel() { complete.resolve(credential); } }),
     });
     assert.equal(account.updateSafety().safe, true);
@@ -188,7 +188,7 @@ test('account safety distinguishes durable, memory-only, disconnected and env-re
     await account.close();
   }
   const replacement = new AccountService({ PM_MCP_URL: credential.endpoint, PM_MCP_TOKEN: secret }, {
-    remote: remote(), store: { async load() {}, async save() { return { persisted: true }; }, async remove() {} },
+    makeRemote: remote, store: { async load() {}, async save() { return { persisted: true }; }, async remove() {} },
     makeFlow: () => ({ async start() { return { status: 'pending' }; }, snapshot() { return { status: 'pending' }; }, async wait() { return credential; }, cancel() {} }),
   });
   t.after(() => replacement.close());
@@ -197,6 +197,9 @@ test('account safety distinguishes durable, memory-only, disconnected and env-re
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(replacement.updateSafety().safe, false);
   assert.match(replacement.updateSafety().reason, /Environment/);
+  const status = await replacement.callTool('connect_account', { action: 'status' });
+  assert.match(status.structuredContent.notice, /host environment still overrides saved authorization/);
+  assert.ok(!JSON.stringify(status).includes(secret));
 });
 
 

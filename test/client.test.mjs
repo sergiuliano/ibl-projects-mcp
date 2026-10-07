@@ -342,3 +342,22 @@ test('matching client forwards exact deadlines and null removal unchanged', asyn
     assert.deepEqual(hosted.calls.at(-1), { name: 'update_task', arguments: args });
   }
 });
+
+test('only exact scoped and all-workspace catalogs are supported, never hybrid contracts', async t => {
+  const { ALL_WORKSPACE_TOOL_DEFINITIONS } = await import('../dist/contract.js');
+  assert.equal(verifyCatalog(TOOL_DEFINITIONS), 'workspace');
+  assert.equal(verifyCatalog(ALL_WORKSPACE_TOOL_DEFINITIONS), 'all');
+  for (const catalog of [
+    [...TOOL_DEFINITIONS, ALL_WORKSPACE_TOOL_DEFINITIONS.find(tool => tool.name === 'list_workspaces')],
+    ALL_WORKSPACE_TOOL_DEFINITIONS.filter(tool => tool.name !== 'list_workspaces'),
+    [...ALL_WORKSPACE_TOOL_DEFINITIONS, TOOL_DEFINITIONS[0]],
+    ALL_WORKSPACE_TOOL_DEFINITIONS.map(tool => tool.name === 'list_projects' ? { ...tool, inputSchema: { ...tool.inputSchema, additionalProperties: true } } : tool),
+  ]) assert.throws(() => verifyCatalog(catalog), error => error.code === 'REMOTE_CONTRACT_MISMATCH');
+  const hosted = await fixture(t, { catalog: ALL_WORKSPACE_TOOL_DEFINITIONS });
+  const remote = new RemoteService(hosted.env); t.after(() => remote.close());
+  assert.equal(await remote.initialize(), 'all');
+  await remote.callTool('list_workspaces', {});
+  const args = { workspaceId: '11111111-1111-4111-8111-111111111111' };
+  await remote.callTool('list_projects', args);
+  assert.deepEqual(hosted.calls, [{ name: 'list_workspaces', arguments: {} }, { name: 'list_projects', arguments: args }]);
+});

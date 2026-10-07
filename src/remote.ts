@@ -1,7 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport, StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
-import { MCP_VERSION, TOOL_DEFINITIONS } from './contract.js';
+import { MCP_VERSION, TOOL_DEFINITIONS, ALL_WORKSPACE_TOOL_DEFINITIONS } from './contract.js';
 import { accessToken, BridgeError, endpoint } from './config.js';
 
 // Ignore descriptive metadata, but retain all validation and default semantics.
@@ -24,8 +24,11 @@ function canonical(value: unknown, mode: 'schema' | 'map' | 'data' = 'schema'): 
   }));
 }
 
-export function verifyCatalog(actual: Tool[]): void {
-  const expected = new Map(TOOL_DEFINITIONS.map(tool => [tool.name, tool]));
+export type WorkspaceAccess = 'workspace' | 'all';
+
+export function verifyCatalog(actual: Tool[]): WorkspaceAccess {
+  const mode = actual.length === ALL_WORKSPACE_TOOL_DEFINITIONS.length ? 'all' : 'workspace';
+  const expected = new Map((mode === 'all' ? ALL_WORKSPACE_TOOL_DEFINITIONS : TOOL_DEFINITIONS).map(tool => [tool.name, tool]));
   const names = new Set(actual.map(tool => tool.name));
   if (actual.length !== expected.size || names.size !== expected.size || actual.some(tool => !expected.has(tool.name))) {
     throw new BridgeError('REMOTE_CONTRACT_MISMATCH', `The hosted MCP tool list differs from client ${MCP_VERSION}. Install the compatible signed release from https://maddots.app/docs/mcp and restart the MCP connection. No project operation was submitted.`);
@@ -38,6 +41,7 @@ export function verifyCatalog(actual: Tool[]): void {
       }
     }
   }
+  return mode;
 }
 
 export function failure(code: string, message: string, outcomeUncertain = false): CallToolResult {
@@ -47,9 +51,10 @@ export function failure(code: string, message: string, outcomeUncertain = false)
 
 export class RemoteService {
   private client?: Client;
+  private workspaceAccess: WorkspaceAccess = 'workspace';
   constructor(private readonly env: NodeJS.ProcessEnv = process.env) {}
 
-  async initialize(credential?: string): Promise<void> {
+  async initialize(credential?: string): Promise<WorkspaceAccess> {
     const url = endpoint(this.env);
     const token = credential ?? await accessToken(this.env);
     const client = new Client({ name: 'ibl-projects-mcp-bridge', version: MCP_VERSION });
@@ -74,7 +79,8 @@ export class RemoteService {
         cursor = page.nextCursor;
         if (++pages > 100 || tools.length > 1000) throw new BridgeError('REMOTE_CONTRACT_MISMATCH', 'The hosted MCP catalog exceeded the supported size.');
       } while (cursor);
-      verifyCatalog(tools);
+      this.workspaceAccess = verifyCatalog(tools);
+      return this.workspaceAccess;
     } catch (error) {
       await this.close();
       if (error instanceof BridgeError) throw error;
@@ -85,7 +91,7 @@ export class RemoteService {
   }
 
   async callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<CallToolResult> {
-    const definition = TOOL_DEFINITIONS.find(tool => tool.name === name);
+    const definition = (this.workspaceAccess === 'all' ? ALL_WORKSPACE_TOOL_DEFINITIONS : TOOL_DEFINITIONS).find(tool => tool.name === name);
     if (!definition) return failure('TOOL_UNAVAILABLE', 'This tool is unavailable in the client contract.', false);
     if (!this.client) return failure('NOT_CONNECTED', 'Initialize the MCP connection before calling tools.', false);
     if (signal?.aborted) return failure('CANCELLED', 'The call was cancelled before submission.', false);

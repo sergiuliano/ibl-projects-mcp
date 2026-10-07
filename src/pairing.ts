@@ -64,7 +64,7 @@ export class PairingFlow {
   }
   async start(scopes: Scope[]): Promise<PendingPairing> {
     if (this.pending || this.completion) throw new BridgeError('PAIRING_IN_PROGRESS', 'This account connection has already started.');
-    const response = await this.post('/api/mcp/pairings', { clientName: 'MadDots MCP', scopes });
+    const response = await this.post('/api/mcp/pairings', { clientName: 'MadDots MCP', scopes, workspaceAccess: 'all' });
     if (!response.ok) { await response.body?.cancel(); throw new BridgeError('PAIRING_UNAVAILABLE', 'Cannot start account connection. Check service availability and request a new code explicitly.'); }
     const data = await boundedJson(response);
     const now = this.timing.now();

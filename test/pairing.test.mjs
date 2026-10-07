@@ -15,7 +15,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { createMcpServer } from '../dist/server.js';
-import { TOOL_DEFINITIONS } from '../dist/contract.js';
+import { TOOL_DEFINITIONS, ALL_WORKSPACE_TOOL_DEFINITIONS } from '../dist/contract.js';
 import { AccountService, CONNECT_ACCOUNT_TOOL } from '../dist/account.js';
 import { CredentialStore } from '../dist/credentials.js';
 import { PairingFlow } from '../dist/pairing.js';
@@ -187,7 +187,7 @@ test('disconnect waits for an already claimed credential save before removing it
   const events = [];
   const saveBarrier = new Promise(resolve => { finishSave = resolve; });
   const account = new AccountService({}, {
-    remote: { initialize: async () => {}, close: async () => {}, callTool: async () => ({ content: [] }) },
+    makeRemote: () => ({ initialize: async () => {}, close: async () => {}, callTool: async () => ({ content: [] }) }),
     store: { load: async () => undefined, save: async () => { await saveBarrier; events.push('save'); return { persisted: true }; }, remove: async () => { events.push('remove'); } },
     makeFlow: () => ({ start: async () => ({}), snapshot: () => ({ status: 'pending' }), wait: async () => credential(), cancel: () => {} }),
   });
@@ -244,7 +244,7 @@ function accountFixture(options = {}) {
     const pending = { status: 'pending', ...issue(Date.now()), scopes }; delete pending.deviceCode;
     return { start: async () => pending, wait: () => done, snapshot: () => pending, cancel: () => reject(new BridgeError('PAIRING_CANCELLED', 'Cancelled.')) };
   };
-  const account = new AccountService({}, { remote, store, makeFlow, confirmReconnect: options.confirmReconnect });
+  const account = new AccountService({}, { remote, makeRemote: () => ({ ...remote }), store, makeFlow, confirmReconnect: options.confirmReconnect });
   return { account, calls, saved, removed, initialized, started: () => started, accept: value => accept(value), reject: error => reject(error) };
 }
 async function settle() { await new Promise(resolve => setImmediate(resolve)); }
@@ -318,28 +318,29 @@ test('first-time connect does not request reconnect confirmation and tool guidan
   assert.match(CONNECT_ACCOUNT_TOOL.description, /never pass it to any other tool/i);
 });
 
-test('reconnect replaces the approved account and requires a new approval before any business call', async t => {
+test('reconnect keeps the current account usable until the replacement is approved and verified', async t => {
   const fixture = accountFixture(); t.after(() => fixture.account.close());
   await fixture.account.callTool('connect_account', {});
   fixture.accept(credential(url, 'First Account')); await settle();
   await fixture.account.callTool('connect_account', { action: 'reconnect', confirm: true });
-  assert.equal((await fixture.account.callTool('list_projects', {})).structuredContent.error.code, 'AUTH_REQUIRED');
+  assert.equal((await fixture.account.callTool('list_projects', {})).structuredContent.ok, true);
   fixture.accept(credential(url, 'Second Account')); await settle();
   const state = await fixture.account.callTool('connect_account', { action: 'status' });
   assert.equal(state.structuredContent.account.name, 'Second Account');
   assert.equal(fixture.started(), 2);
-  assert.equal(fixture.calls.length, 0);
+  assert.equal(fixture.calls.length, 1);
 });
 
-test('claimed credential is saved before contract validation fails and no business operation is sent', async () => {
+test('failed contract validation discards the candidate before saving or submitting business operations', async () => {
   let saved = false, calls = 0;
   const flow = { start: async () => ({}), snapshot: () => ({ status: 'pending' }), wait: async () => credential(), cancel: () => {} };
   const account = new AccountService({}, {
-    remote: { initialize: async () => { assert.equal(saved, true); throw new BridgeError('REMOTE_CONTRACT_MISMATCH', 'Contract differs.'); }, close: async () => {}, callTool: async () => { calls++; return { content: [] }; } },
+    makeRemote: () => ({ initialize: async () => { assert.equal(saved, false); throw new BridgeError('REMOTE_CONTRACT_MISMATCH', 'Contract differs.'); }, close: async () => {}, callTool: async () => { calls++; return { content: [] }; } }),
     store: { load: async () => undefined, save: async () => { saved = true; return { persisted: true }; } }, makeFlow: () => flow,
   });
   await assert.rejects(account.setup(() => {}), error => error.code === 'REMOTE_CONTRACT_MISMATCH');
   assert.equal(calls, 0);
+  assert.equal(saved, false);
   assert.equal((await account.callTool('connect_account', { action: 'status' })).structuredContent.error.code, 'REMOTE_CONTRACT_MISMATCH');
   await account.close();
 });
@@ -349,7 +350,7 @@ test('concurrent reconnects cannot let an earlier credential save overwrite the 
   const saved = [];
   const firstSave = new Promise(resolve => { finishSave = resolve; });
   const account = new AccountService({}, {
-    remote: { initialize: async () => {}, close: async () => {}, callTool: async () => ({ content: [] }) },
+    makeRemote: () => ({ initialize: async () => {}, close: async () => {}, callTool: async () => ({ content: [] }) }),
     store: { load: async () => undefined, save: async value => {
       if (value.account.name === 'First Account') await firstSave;
       saved.push(value.account.name); return { persisted: true };
@@ -378,9 +379,9 @@ test('revoked authorization is rejected once and does not silently retry the ope
   let calls = 0, initialized = 0, removed = 0;
   const account = new AccountService({}, {
     store: { load: async () => credential(), save: async () => ({ persisted: true }), remove: async () => { removed++; } },
-    remote: { initialize: async () => { initialized++; }, close: async () => {}, callTool: async () => {
+    makeRemote: () => ({ initialize: async () => { initialized++; }, close: async () => {}, callTool: async () => {
       calls++; return { isError: true, content: [], structuredContent: { error: { code: 'AUTH_REQUIRED' } } };
-    } },
+    } }),
   });
   t.after(() => account.close());
   assert.equal((await account.callTool('create_project', { name: 'Revoked' })).structuredContent.error.code, 'AUTH_REQUIRED');
@@ -393,14 +394,14 @@ test('revoked authorization is rejected once and does not silently retry the ope
 test('foreground setup reports when approval can only be kept for the current session', async () => {
   const account = new AccountService({}, {
     store: { load: async () => undefined, save: async () => ({ persisted: false, notice: 'Connected for this session only.' }) },
-    remote: { initialize: async () => {}, close: async () => {}, callTool: async () => { throw new Error('No project tool allowed during setup.'); } },
+    makeRemote: () => ({ initialize: async () => {}, close: async () => {}, callTool: async () => { throw new Error('No project tool allowed during setup.'); } }),
     makeFlow: () => ({ start: async () => ({}), snapshot: () => ({ status: 'pending' }), wait: async () => credential(), cancel: () => {} }),
   });
   assert.equal((await account.setup(() => {})).notice, 'Connected for this session only.');
   await account.close();
 });
 
-async function httpFixture(t, requestedScopes = scopes) {
+async function httpFixture(t, requestedScopes = scopes, wide = false) {
   let registrations = 0, polls = 0, requests = 0;
   const calls = [];
   let endpoint;
@@ -412,6 +413,7 @@ async function httpFixture(t, requestedScopes = scopes) {
       registrations++;
       assert.equal(req.headers.authorization, undefined);
       assert.deepEqual(body.scopes, requestedScopes);
+      assert.equal(body.workspaceAccess, 'all');
       res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ data: issue(Date.now(), endpoint) })); return;
     }
     if (req.url === '/api/mcp/pairings/poll') {
@@ -420,7 +422,7 @@ async function httpFixture(t, requestedScopes = scopes) {
     }
     if (req.headers.authorization !== `Bearer ${secret}`) { res.writeHead(401); res.end('untrusted ' + secret); return; }
     if (req.method !== 'POST') { res.writeHead(405); res.end(); return; }
-    const server = createMcpServer({ callTool: async (name, args) => { calls.push({ name, args }); return { content: [], structuredContent: { fixture: true } }; } });
+    const server = createMcpServer({ callTool: async (name, args) => { calls.push({ name, args }); return { content: [], structuredContent: { fixture: true } }; } }, [], undefined, { workspaceAccess: wide });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     try { await server.connect(transport); await transport.handleRequest(req, res, body); }
     finally { await server.close(); }
@@ -431,8 +433,8 @@ async function httpFixture(t, requestedScopes = scopes) {
   const env = { ...cleanEnv(), PM_MCP_URL: endpoint.href, PM_MCP_ALLOW_INSECURE_LOOPBACK: '1', PM_MCP_STATE_DIR: await directory(t) };
   return { env, calls, registrations: () => registrations, polls: () => polls, requests: () => requests };
 }
-async function stdio(t, env, elicitation) {
-  const client = new Client({ name: 'pairing-stdio-test', version: '1.0.0' }, elicitation ? { capabilities: { elicitation: { form: {} } } } : {});
+async function stdio(t, env, elicitation, listChanged) {
+  const client = new Client({ name: 'pairing-stdio-test', version: '1.0.0' }, { ...(elicitation ? { capabilities: { elicitation: { form: {} } } } : {}), ...(listChanged ? { listChanged } : {}) });
   if (elicitation) client.setRequestHandler(ElicitRequestSchema, elicitation);
   const transport = new StdioClientTransport({ command: process.execPath, args: [cli], env, stderr: 'pipe' });
   let stderr = ''; transport.stderr?.on('data', chunk => { stderr += chunk.toString(); });
@@ -538,4 +540,110 @@ test('pairing HTTP redirects cannot forward the polling secret', async t => {
   await flow.start(scopes);
   await assert.rejects(flow.wait(), error => error.code === 'PAIRING_CONNECTION_FAILED');
   assert.equal(redirected, 0);
+});
+
+test('cancel, rejection, contract failure and persistence failure preserve the old live and durable account', async t => {
+  for (const outcome of ['cancel', 'denied', 'contract', 'storage']) {
+    let saved = credential(url, 'Original'), claim, reject;
+    const writes = [], calls = [];
+    const account = new AccountService({}, {
+      store: { load: async () => saved, save: async value => { writes.push(value); if (outcome === 'storage') return { persisted: false }; saved = value; return { persisted: true }; }, remove: async () => {} },
+      makeRemote: () => {
+        let identity;
+        return { initialize: async token => { identity = token; if (token !== secret && outcome === 'contract') throw new BridgeError('REMOTE_CONTRACT_MISMATCH', 'Mismatch.'); return token === secret ? 'workspace' : 'all'; }, close: async () => {}, callTool: async () => { calls.push(identity); return { content: [], structuredContent: { ok: true } }; } };
+      },
+      makeFlow: () => {
+        const done = new Promise((resolve, fail) => { claim = resolve; reject = fail; }); void done.catch(() => {});
+        return { start: async () => ({}), snapshot: () => ({ status: 'pending' }), wait: () => done, cancel: () => reject(new BridgeError('PAIRING_CANCELLED', 'Cancelled.')) };
+      },
+    });
+    t.after(() => account.close());
+    assert.equal(await account.workspaceAccess(), false);
+    await account.callTool('connect_account', { action: 'reconnect', confirm: true });
+    assert.equal((await account.callTool('list_projects', {})).structuredContent.ok, true);
+    if (outcome === 'cancel') await account.callTool('connect_account', { action: 'cancel' });
+    else if (outcome === 'denied') reject(new BridgeError('PAIRING_ENDED', 'Denied.'));
+    else claim({ ...credential(url, 'Replacement'), secret: 'pm_candidate_test_only_1234567890' });
+    await settle();
+    assert.equal((await account.callTool('connect_account', { action: 'status' })).structuredContent.account.name, 'Original');
+    assert.equal((await account.callTool('list_projects', {})).structuredContent.ok, true);
+    assert.equal(saved.account.name, 'Original');
+    assert.deepEqual(calls, [secret, secret]);
+    assert.equal(writes.length, outcome === 'storage' ? 1 : 0);
+    assert.equal(await account.workspaceAccess(), false);
+  }
+});
+
+test('a replacement does not close or replay an in-flight operation on the original connection', async t => {
+  let complete, claim, oldClosed = false, instance = 0;
+  const pending = new Promise(resolve => { complete = resolve; });
+  const account = new AccountService({}, {
+    store: { load: async () => credential(), save: async () => ({ persisted: true }), remove: async () => {} },
+    makeRemote: () => {
+      const original = instance++ === 0;
+      return { initialize: async () => original ? 'workspace' : 'all', close: async () => { if (original) oldClosed = true; }, callTool: async () => { assert.equal(original, true); await pending; return { content: [], structuredContent: { original: true } }; } };
+    },
+    makeFlow: () => ({ start: async () => ({}), snapshot: () => ({ status: 'pending' }), wait: () => new Promise(resolve => { claim = resolve; }), cancel: () => {} }),
+  });
+  t.after(() => account.close());
+  const operation = account.callTool('create_project', {}); await settle();
+  await account.callTool('connect_account', { action: 'reconnect', confirm: true });
+  claim(credential(url, 'Replacement')); await settle();
+  assert.equal(await account.workspaceAccess(), true);
+  assert.equal(oldClosed, false);
+  complete(); assert.equal((await operation).structuredContent.original, true);
+  assert.equal(oldClosed, true);
+});
+
+test('verified broad catalog refreshes the host and survives a fresh process without another approval', { timeout: 15_000 }, async t => {
+  const fixture = await httpFixture(t, scopes, true);
+  let changes = 0, cachedTools = [];
+  const first = await stdio(t, fixture.env, undefined, { tools: { debounceMs: 0, autoRefresh: true, onChanged: (error, tools) => { assert.equal(error, null); changes++; cachedTools = tools; } } });
+  assert.equal((await first.client.listTools()).tools.some(tool => tool.name === 'list_workspaces'), false);
+  await first.client.callTool({ name: 'connect_account', arguments: {} });
+  for (let attempt = 0; attempt < 60; attempt++) {
+    if ((await first.client.callTool({ name: 'connect_account', arguments: { action: 'status' } })).structuredContent.status === 'connected') break;
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  const tools = (await first.client.listTools()).tools;
+  assert.equal(tools.length, ALL_WORKSPACE_TOOL_DEFINITIONS.length + 1);
+  for (let attempt = 0; attempt < 100 && !cachedTools.some(tool => tool.name === 'list_workspaces'); attempt++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.ok(changes > 0, 'Worker catalog change reaches the supervisor and host.');
+  assert.equal(cachedTools.length, ALL_WORKSPACE_TOOL_DEFINITIONS.length + 1, 'The host refreshes its cached schemas automatically.');
+  assert.equal(tools.find(tool => tool.name === 'list_projects').inputSchema.properties.workspaceId.type, 'string');
+  const args = { workspaceId: '11111111-1111-4111-8111-111111111111' };
+  await first.client.callTool({ name: 'list_projects', arguments: args });
+  assert.deepEqual(fixture.calls.at(-1), { name: 'list_projects', args });
+  await first.client.close();
+  const second = await stdio(t, fixture.env);
+  assert.equal((await second.client.listTools()).tools.length, ALL_WORKSPACE_TOOL_DEFINITIONS.length + 1);
+  assert.equal((await second.client.callTool({ name: 'connect_account', arguments: { action: 'status' } })).structuredContent.workspaceAccess, 'all');
+  assert.equal(fixture.registrations(), 1);
+  assert.equal(fixture.polls(), 1);
+  await second.client.callTool({ name: 'connect_account', arguments: { action: 'disconnect', confirm: true } });
+  assert.equal((await second.client.listTools()).tools.some(tool => tool.name === 'list_workspaces'), false);
+});
+
+test('a late authorization failure from the old initializer cannot erase the promoted account', async t => {
+  let releaseSave, rejectOld, instance = 0;
+  const saveBarrier = new Promise(resolve => { releaseSave = resolve; });
+  const oldInitialization = new Promise((_resolve, reject) => { rejectOld = reject; });
+  const account = new AccountService({}, {
+    store: { load: async () => credential(), save: async () => { await saveBarrier; return { persisted: true }; }, remove: async () => {} },
+    makeRemote: () => {
+      const original = instance++ === 0;
+      return { initialize: async () => original ? oldInitialization : 'all', close: async () => {}, callTool: async () => ({ content: [], structuredContent: { replacement: true } }) };
+    },
+    makeFlow: () => ({ start: async () => ({}), snapshot: () => ({ status: 'pending' }), wait: async () => credential(url, 'Replacement'), cancel: () => {} }),
+  });
+  t.after(() => account.close());
+  await account.callTool('connect_account', { action: 'reconnect', confirm: true });
+  await settle();
+  const oldCall = account.callTool('list_projects', {}); await settle();
+  releaseSave(); await settle();
+  rejectOld(new BridgeError('AUTH_REQUIRED', 'Old authorization expired.'));
+  assert.equal((await oldCall).structuredContent.error.code, 'AUTH_REQUIRED');
+  assert.equal((await account.callTool('connect_account', { action: 'status' })).structuredContent.account.name, 'Replacement');
+  assert.equal(await account.workspaceAccess(), true);
+  assert.equal((await account.callTool('list_projects', {})).structuredContent.replacement, true);
 });
