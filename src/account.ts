@@ -226,6 +226,24 @@ export class AccountService {
     } catch (error) { const safe = safeError(error); return failure(safe.code, safe.message); }
   }
 
+  // Only durable, unchanged authorization can be reconstructed by a new worker.
+  // Never expose credential or pairing material through the supervisor handshake.
+  updateSafety(): { safe: boolean; reason?: string } {
+    if (this.closed || this.loading || this.initialization || this.reconnecting || this.starting || this.flow) {
+      return { safe: false, reason: 'Account authorization is in progress. Keep this connection until it completes.' };
+    }
+    if (this.terminal || (this.loaded && !this.secret && (this.hadCredential || this.generation > 0))) {
+      return { safe: false, reason: 'Account authorization changed in this session. Reconnect the MCP host to apply the update.' };
+    }
+    if (this.generation > 0 && (this.env.PM_MCP_TOKEN || this.env.PM_MCP_TOKEN_FILE)) {
+      return { safe: false, reason: 'Environment authorization was replaced in this session. Update that configuration and reconnect the MCP host to apply the update.' };
+    }
+    if (this.secret && this.credential && !this.persistence.persisted) {
+      return { safe: false, reason: 'Authorization is stored only in memory. Reconnect the MCP host and approve the account again to apply the update.' };
+    }
+    return { safe: true };
+  }
+
   async setup(display: (pending: PendingPairing) => void, readOnly = false): Promise<Persistence> {
     await this.load();
     if (this.secret) { await this.ensureConnected(); return this.persistence; }

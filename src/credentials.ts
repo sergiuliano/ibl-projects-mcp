@@ -32,9 +32,10 @@ export class CredentialStore {
     const configured = env.PM_MCP_STATE_DIR || join(homedir(), '.config', 'ibl-projects-mcp');
     if (!isAbsolute(configured)) throw new BridgeError('CONFIG_ERROR', 'PM_MCP_STATE_DIR must be an absolute private directory outside the client checkout.');
     this.directory = resolve(configured);
-    const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-    const distance = relative(packageRoot, this.directory);
-    if (!distance || (!distance.startsWith(`..${sep}`) && !isAbsolute(distance))) throw new BridgeError('CONFIG_ERROR', 'Account credentials must be stored outside the client checkout.');
+    for (const packageRoot of [resolve(dirname(fileURLToPath(import.meta.url)), '..'), ...(env.PM_MCP_INSTALL_ROOT ? [resolve(env.PM_MCP_INSTALL_ROOT)] : [])]) {
+      const distance = relative(packageRoot, this.directory);
+      if (!distance || (!distance.startsWith(`..${sep}`) && !isAbsolute(distance))) throw new BridgeError('CONFIG_ERROR', 'Account credentials must be stored outside the client checkout.');
+    }
     this.path = join(this.directory, createHash('sha256').update(endpoint.href).digest('hex') + '.json');
   }
   private async directoryReady(create: boolean): Promise<boolean> {

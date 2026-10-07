@@ -38,14 +38,16 @@ export async function accessToken(env: NodeJS.ProcessEnv): Promise<string> {
   const path = env.PM_MCP_TOKEN_FILE;
   if (!path) throw new BridgeError('CONFIG_ERROR', 'Set PM_MCP_TOKEN or PM_MCP_TOKEN_FILE to a user token created in MadDots.');
   if (!isAbsolute(path)) throw new BridgeError('CONFIG_ERROR', 'PM_MCP_TOKEN_FILE must be an absolute path outside this repository.');
-  let resolvedPath: string, packageRoot: string;
+  let resolvedPath: string, packageRoots: string[];
   try {
-    [resolvedPath, packageRoot] = await Promise.all([realpath(path), realpath(resolve(dirname(fileURLToPath(import.meta.url)), '..'))]);
+    [resolvedPath, packageRoots] = await Promise.all([realpath(path), Promise.all([resolve(dirname(fileURLToPath(import.meta.url)), '..'), ...(env.PM_MCP_INSTALL_ROOT ? [env.PM_MCP_INSTALL_ROOT] : [])].map(root => realpath(root)))]);
   } catch {
     throw new BridgeError('CONFIG_ERROR', 'Cannot read the token file. Check its location, ownership, permissions, and that it is not a symlink.');
   }
-  const distance = relative(packageRoot, resolvedPath);
-  if (!distance || (!distance.startsWith(`..${sep}`) && !isAbsolute(distance))) throw new BridgeError('CONFIG_ERROR', 'PM_MCP_TOKEN_FILE must be an absolute path outside this repository.');
+  for (const packageRoot of packageRoots) {
+    const distance = relative(packageRoot, resolvedPath);
+    if (!distance || (!distance.startsWith(`..${sep}`) && !isAbsolute(distance))) throw new BridgeError('CONFIG_ERROR', 'PM_MCP_TOKEN_FILE must be an absolute path outside this repository.');
+  }
   return validateToken(await readPrivateFile(path));
 }
 

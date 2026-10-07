@@ -6,32 +6,48 @@ The approved connection covers every project you can access in the workspace sel
 
 This client requires an MCP-enabled MadDots server with account pairing enabled. The default endpoint is `https://maddots.app/mcp`; availability depends on the operator's separate server deployment. Publishing or installing this client does not deploy or enable that service. The application server, database, private implementation, and deployment configuration are not included.
 
-Follow [the installation guide](docs/install.md). Installation uses a source checkout, Node.js, and npm. The package is not published to npm. Configure [release signing trust](docs/install.md#trust-the-release-signing-key) before verifying the tag or installing dependencies.
+Follow [the installation guide](docs/install.md) to install the version-pinned `v0.5.0` bootstrap from GitHub or build the signed source tag. The package is not published to the npm registry and remains `private: true`.
+
+For npm and npx, use the GitHub release tarball URL, including its version. These commands depend on that release having been published:
 
 ```sh
-git clone --branch v0.4.2 --depth 1 https://github.com/sergiuliano/ibl-projects-mcp.git &&
+npm install --global --ignore-scripts https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.5.0/client-update.tgz
+ibl-projects-mcp --setup
+```
+
+```sh
+npx --yes --ignore-scripts --package=https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.5.0/client-update.tgz ibl-projects-mcp --setup
+```
+
+For a bootstrap verified against the existing source signing key, follow [the signature and artifact verification steps](docs/install.md#verify-the-bootstrap-artifact) before installing the downloaded archive. A source checkout remains supported:
+
+```sh
+git clone --branch v0.5.0 --depth 1 https://github.com/sergiuliano/ibl-projects-mcp.git &&
 cd ibl-projects-mcp &&
 git config gpg.ssh.allowedSignersFile /ABSOLUTE/PATH/allowed_signers &&
-git verify-tag v0.4.2 &&
-npm ci &&
+git verify-tag v0.5.0 &&
+npm ci --ignore-scripts &&
 npm run build &&
 node dist/cli.js --setup
 ```
 
-Installation targets release `v0.4.2`. Use these commands only after the owner has published that release. Unsigned lightweight tags cannot be verified by this procedure; the owner must create and publish a signed release tag before the update procedure below can succeed.
+Configure [release signing trust](docs/install.md#trust-the-release-signing-key) first. Stop if the signed tag is absent or verification fails. Do not accept an unsigned replacement.
 
-To update, verify the specific release tag before checking it out or building:
+Version 0.5.0 introduces a stable local supervisor and verified runtime updates. It checks at startup and every five minutes, then switches a compatible worker only after 60 seconds without a tool call and with no active requests. Calls are never replayed. A supervisor or protocol change requires reconnecting the host; pending account changes, in-memory credentials or an uncertain call can also defer a switch. See [update controls and recovery](docs/install.md#automatic-runtime-updates).
+
+Existing 0.4.x installations need one manual upgrade to this bootstrap and a host restart. Keep the endpoint, saved credentials and host environment. Automatic updates cannot retrofit a supervisor into a client that predates it. Hosted HTTP connections consume the deployed server directly; host-managed plugins use their host's update mechanism.
+
+For an existing source checkout with release signing trust already configured:
 
 ```sh
-git fetch origin tag v0.4.2 &&
-git verify-tag v0.4.2 &&
-git checkout --detach v0.4.2 &&
-npm ci &&
+git fetch origin tag v0.5.0 &&
+git verify-tag v0.5.0 &&
+git checkout --detach v0.5.0 &&
+npm ci --ignore-scripts &&
 npm run build &&
 node dist/cli.js --setup
 ```
 
-Stop if fetching or signature verification fails, including when the tag is absent, unsigned, or signed by a key you do not trust. Confirm the signing key with the repository owner through a trusted channel. Restart your MCP connection after a successful update.
 
 `--setup` shows the approval code, waits for browser approval, and verifies authentication and the shared tool contract. It never calls a project tool. You can instead add the client directly to your MCP host and use `connect_account` there. Stdio initialization does not wait for account approval.
 
@@ -45,12 +61,12 @@ To request a review with a real Inbox notification, use `add_comment` with optio
 
 When automation tags the account owner, the owner receives the Inbox item even though the connection posts under that account. Browser self-mentions keep their existing behavior and do not notify. Mention enrichment is restricted to the trusted hosted MCP transport; raw bearer REST requests cannot use it. Private notification reads and read-state changes remain available only in the signed-in application. Optional emails still follow each recipient's verified address, settings, and existing limits.
 
-Run `npm test` and `npm run pack:check` for development checks. Tests use synthetic credentials and isolated local fixtures. The reusable client is available under the [MIT License](LICENSE). The package's `private: true` setting prevents accidental npm publication; it does not restrict use under that license. Hosted service access remains subject to account and project permissions.
+Run `npm test` and `npm run pack:check` for development checks. `node scripts/prepare-release.mjs --output /ABSOLUTE/PATH/release` prepares and clean-installs the exact runtime archive with locked dependencies and no install scripts. Tests use synthetic credentials and isolated local fixtures. The reusable client is available under the [MIT License](LICENSE). The package's `private: true` setting prevents accidental npm publication; it does not restrict use under that license. Hosted service access remains subject to account and project permissions.
 
 Version 0.4.2 requires confirmation for reconnect and disconnect, preserves existing credentials when cancelling a pending approval, and identifies user content in all successful project tool results. The default endpoint remains `https://maddots.app/mcp`; saved credentials stay scoped to their approved endpoint. After pairing with maddots.app, revoke the old pm.ibl.ro connection in Integrations.
 
 ## Compatibility with the hosted service
 
-Release 0.4.2 includes the optional `dueAt` UTC deadline in `create_task` and `update_task`, matching the hosted catalog. Version 0.4.1 predates those schema fields and cannot pass discovery against that catalog, including before a read. Tool discovery still validates every input and output schema; it never bypasses a mismatch.
+The current client includes the optional `dueAt` UTC deadline in `create_task` and `update_task`, matching the hosted catalog. Version 0.4.1 predates those schema fields and cannot pass discovery against that catalog, including before a read. Tool discovery still validates every input and output schema; it never bypasses a mismatch.
 
-If approval is saved and all 26 local tools appear but a project call returns `REMOTE_CONTRACT_MISMATCH`, update this same installation to the signed release above, rebuild it, and restart the MCP host connection. The local tool list alone does not verify remote compatibility. Keep the existing endpoint and credential directory: a valid saved approval is reused. Run `node dist/cli.js --setup` to check authentication and catalog compatibility, then ask the host to call `list_projects`. Pair again only if authorization has expired or been revoked.
+If approval is saved and all 26 local tools appear but a project call returns `REMOTE_CONTRACT_MISMATCH`, check `--status`, then use `--update` and reconnect the MCP host if requested. For a pre-0.5 bootstrap, perform the one-time manual upgrade above. The local tool list alone does not verify remote compatibility. Keep the existing endpoint and credential directory: a valid saved approval is reused. Run `node dist/cli.js --setup` to check authentication and catalog compatibility, then ask the host to call `list_projects`. Pair again only if authorization has expired or been revoked.

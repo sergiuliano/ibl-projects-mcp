@@ -1,22 +1,59 @@
 # Install the MadDots MCP client
 
-Requirements: Node.js 22.22.1 or later in the Node 22 or 24 series, npm, Git, and a MadDots account. The server operator must deploy and enable MCP and account pairing separately. These installation steps do not establish that the default service is already available.
+Requirements: Node.js 22.22.2 or later in the Node 22 series, or Node.js 24.15.0 or later in the Node 24 series, npm and a MadDots account. Git is required for source signature verification and source installs. The optional artifact verification command uses GitHub CLI. The server operator deploys MCP and account pairing separately.
 
-1. Clone the pinned release `v0.4.2` of [sergiuliano/ibl-projects-mcp](https://github.com/sergiuliano/ibl-projects-mcp) into a stable local directory.
-2. Configure release signing trust as described below, then run `git verify-tag v0.4.2`.
-3. Run `npm ci` and `npm run build` there.
-4. Run `node dist/cli.js --setup`. Open the displayed link, sign in to the intended MadDots account, enter the eight-character code, and approve the connection. The code expires after five minutes.
-5. Configure your MCP host to run `node` with the absolute path to `dist/cli.js`, without `--setup`.
+## Install the version-pinned bootstrap
+
+The client is distributed through [sergiuliano/ibl-projects-mcp releases](https://github.com/sergiuliano/ibl-projects-mcp/releases), with npm publication disabled. Use these commands only after `v0.5.0` and its `client-update.tgz` asset exist. Do not run `npm install ibl-projects-mcp` or `npx ibl-projects-mcp`, which would look for an unpublished registry package.
 
 ```sh
-git clone --branch v0.4.2 --depth 1 https://github.com/sergiuliano/ibl-projects-mcp.git &&
+npm install --global --ignore-scripts https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.5.0/client-update.tgz
+ibl-projects-mcp --setup
+```
+
+A version-pinned npx invocation is also supported:
+
+```sh
+npx --yes --ignore-scripts --package=https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.5.0/client-update.tgz ibl-projects-mcp --setup
+```
+
+These direct URL commands trust the GitHub release distribution channel for the first bootstrap. To verify that archive against the trusted source tag and the release workflow before executing it, use [artifact verification](#verify-the-bootstrap-artifact), then install the verified local archive. Later automatic runtime downloads always require the fixed workflow's Sigstore attestation.
+
+Setup shows a browser link and an eight-character code. Open the link, sign in to the intended MadDots account, enter the code and approve access within five minutes. Then configure your MCP host without `--setup`. For a global installation, use `ibl-projects-mcp` as the command. For npx:
+
+```json
+{
+  "mcpServers": {
+    "ibl-projects": {
+      "command": "npx",
+      "args": [
+        "--yes",
+        "--ignore-scripts",
+        "--package=https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.5.0/client-update.tgz",
+        "ibl-projects-mcp"
+      ]
+    }
+  }
+}
+```
+
+The bootstrap version stays pinned in this configuration while verified compatible runtime updates are selected from a separate cache. For a new read-only approval, append `--read-only` to the setup command. Existing authorization keeps its original scopes.
+
+## Build the signed source release
+
+First configure [release signing trust](#trust-the-release-signing-key), then verify the exact tag before installing dependencies:
+
+```sh
+git clone --branch v0.5.0 --depth 1 https://github.com/sergiuliano/ibl-projects-mcp.git &&
 cd ibl-projects-mcp &&
 git config gpg.ssh.allowedSignersFile /ABSOLUTE/PATH/allowed_signers &&
-git verify-tag v0.4.2 &&
-npm ci &&
+git verify-tag v0.5.0 &&
+npm ci --ignore-scripts &&
 npm run build &&
 node dist/cli.js --setup
 ```
+
+Unsigned lightweight tags cannot be verified by this procedure. Stop when fetching or signature verification fails. Never replace signature verification with a checksum alone.
 
 ## Trust the release signing key
 
@@ -32,14 +69,33 @@ Configure this checkout to use the file:
 
 ```sh
 git config gpg.ssh.allowedSignersFile /ABSOLUTE/PATH/allowed_signers
-git verify-tag v0.4.2
+git verify-tag v0.5.0
 ```
 
 Continue only when Git reports a good signature for `sergiuliano` with the verified fingerprint. Do not trust every key in the downloaded list automatically. A changed signing key requires a new confirmation with the owner.
 
-For a new read-only approval, run `node dist/cli.js --setup --read-only`. This requests only `kanban:read`; an existing authorization is reused with its original scopes.
+## Verify the bootstrap artifact
 
-Setup waits for your approval, then verifies authentication and matching hosted tool names and schemas. It does not call a project tool. You may skip the setup command and connect from your MCP host instead:
+After cloning the pinned source tag and configuring the allowed-signers file above, verify the tag, download all three assets into a new empty directory, and verify the artifact against the exact signed source commit. The release workflow publishes the same archive under both its commit release and the signed version's bootstrap release.
+
+```sh
+git verify-tag v0.5.0 &&
+mkdir bootstrap-download &&
+gh release download v0.5.0 --repo sergiuliano/ibl-projects-mcp --dir bootstrap-download \
+  --pattern client-update.tgz --pattern client-update.sigstore.json --pattern client-update.tgz.sha256 &&
+gh attestation verify bootstrap-download/client-update.tgz \
+  --bundle bootstrap-download/client-update.sigstore.json \
+  --repo sergiuliano/ibl-projects-mcp \
+  --cert-identity 'https://github.com/sergiuliano/ibl-projects-mcp/.github/workflows/client-release.yml@refs/heads/main' \
+  --cert-oidc-issuer https://token.actions.githubusercontent.com \
+  --source-ref refs/heads/main --source-digest "$(git rev-parse 'v0.5.0^{commit}')" \
+  --signer-digest "$(git rev-parse 'v0.5.0^{commit}')" --deny-self-hosted-runners &&
+npm install --global --ignore-scripts ./bootstrap-download/client-update.tgz
+```
+
+Run `ibl-projects-mcp --setup` after this succeeds. The checksum is a convenience for transfer checks; the signed provenance binds the digest to the repository, workflow and source commit. GitHub documents [attestation verification](https://cli.github.com/manual/gh_attestation_verify).
+
+For a source installation, setup verifies authentication and matching hosted tool names and schemas without calling a project tool. Configure the host with an absolute path to the bootstrap:
 
 ```json
 {
@@ -52,7 +108,7 @@ Setup waits for your approval, then verifies authentication and matching hosted 
 }
 ```
 
-Replace the path with your own stable installation path. The client starts immediately even without saved authorization. Ask your MCP host to call `connect_account`, then follow the returned link and code. After approval, project tools work in the same client session. A project operation attempted before approval returns an authorization instruction and is not queued or replayed.
+Replace the path with your stable installation path. You may skip setup and ask the host to call `connect_account`. Stdio starts without waiting for account approval. A project operation attempted before approval returns an authorization instruction and is never queued or replayed.
 
 ## Account access and connection controls
 
@@ -100,22 +156,44 @@ Do not put a token in command-line arguments, a URL, or a committed host configu
 
 An explicit local endpoint such as `http://127.0.0.1:PORT/mcp` also requires `PM_MCP_ALLOW_INSECURE_LOOPBACK=1`. HTTP to remote hosts remains rejected. Use synthetic credentials, a temporary `PM_MCP_STATE_DIR`, and an isolated database for development.
 
-## Updates, failures, and data flow
+## One-time migration from 0.4.x
 
-These instructions target `v0.4.2`; use them only after the owner publishes that release. Unsigned lightweight tags cannot be verified by this procedure. The owner must create and publish a signed release tag; this guide does not establish that `v0.4.2` already exists.
-
-Update to the exact release only after its signature verifies:
+Clients released before 0.5.0 cannot install the new supervisor automatically. Stop the host's MCP connection, update the bootstrap once, then restart the connection. For a source checkout, preserve the existing directory and verify the exact signed tag before changing it:
 
 ```sh
-git fetch origin tag v0.4.2 &&
-git verify-tag v0.4.2 &&
-git checkout --detach v0.4.2 &&
-npm ci &&
+git fetch origin tag v0.5.0 &&
+git verify-tag v0.5.0 &&
+git checkout --detach v0.5.0 &&
+npm ci --ignore-scripts &&
 npm run build &&
 node dist/cli.js --setup
 ```
 
-Stop if fetching or verification fails. An absent or unsigned tag, an invalid signature, or a signing key you do not trust is not an approved update. Confirm the signing key with the repository owner through a trusted channel. Restart the MCP connection after a successful update. The client does not update itself. A mismatched hosted tool contract prevents project operations.
+For npm or npx, install the versioned GitHub release archive above and update the host command to that bootstrap. Preserve `PM_MCP_URL`, `PM_MCP_STATE_DIR`, environment token settings and the saved credential directory. A valid existing authorization is reused; do not pair again solely for an update or a schema mismatch. Do not copy credentials to a different endpoint.
+
+## Automatic runtime updates
+
+The 0.5.0 bootstrap runs a stable supervisor and an isolated runtime worker. On startup and every five minutes, it checks the public `sergiuliano/ibl-projects-mcp` release channel. Every runtime archive must have a valid Sigstore bundle with GitHub SLSA provenance from `.github/workflows/client-release.yml` on `refs/heads/main` in that exact repository. The verified source commit selects the immutable `client-<commit>` asset URL; the verified digest must match the downloaded archive. An unsigned release, an unrelated signer, a changed digest or an invalid package is rejected.
+
+The updater stages the archive separately from your checkout, installs its locked production dependencies with lifecycle scripts disabled and checks the candidate before selecting it. The live supervisor switches a compatible worker only after 60 seconds without a tool call, with no active requests. It does not terminate or replay a running operation to apply an update. When a worker can switch safely, the host's connection remains open.
+
+A supervisor or worker-protocol change requires a host reconnect. Pending pairing, in-memory authorization, an account transition or an uncertain operation can also defer a switch. Read `--status`, finish pending account work, then reconnect the host when requested. A release requiring a newer bootstrap needs the version-pinned manual installation procedure as well. Credentials and host configuration are preserved by runtime updates.
+
+Use the same bootstrap command and environment as the MCP host for these controls. For a source installation:
+
+```sh
+node dist/cli.js --status
+node dist/cli.js --update
+node dist/cli.js --rollback
+```
+
+For npm or npx installations, pass the same flags to `ibl-projects-mcp`. `--status` reports the installed bootstrap, runtime selected for the next launch, last check and failure reason. For the running host connection, `connect_account` with `action: "status"` also reports its active runtime, pending release and any reconnect requirement. `--update` explicitly checks for a verified update even when automatic checks are disabled. `--rollback` selects the previous verified runtime, or the bundled bootstrap when no previous cached release is available. Reconnect the host afterward so it uses that runtime. The rejected release is skipped by automatic checks until an explicit `--update` retries it. Rollback never downloads an arbitrary older package.
+
+Set `PM_MCP_AUTO_UPDATE=0` in the MCP host environment to disable automatic checks. This keeps using an already selected verified cached runtime; it does not force a downgrade to the bootstrap. The default update cache is `~/.cache/maddots-mcp/updates/`. Set `PM_MCP_UPDATE_DIR` to an absolute private directory outside the checkout to override it. Keep it separate from `PM_MCP_STATE_DIR`, which stores credentials. Unsafe cache permissions, a symlinked cache directory or aliases overlapping protected locations fail closed. Do not delete credential state when troubleshooting a runtime update.
+
+Hosted Streamable HTTP users consume the deployed server directly and do not run this updater. Host-managed plugins are updated by their host. This guide describes the local Node.js stdio client and does not establish compatibility with any particular host product.
+
+## Failures and data flow
 
 The client sends tool names, arguments, and its bearer token to the configured endpoint over HTTPS. Returned project data is passed to your MCP host. Setup and background pairing do not invoke project tools. Connection failures are reported without raw server error pages. Failed mutations are not retried because their outcome can be unknown; inspect existing project state before repeating a change.
 
@@ -125,12 +203,12 @@ The client keeps no local project cache or activity log. Your MCP host may retai
 
 ## License and distribution
 
-This reusable client is licensed under [MIT](../LICENSE) and installed from its public GitHub source repository. npm publication and hosted server deployment are separate actions and are not performed by these instructions.
+This reusable client is licensed under [MIT](../LICENSE) and distributed through its public GitHub source tags and attested release archives. `private: true` prevents npm publication. The release workflow has no npm publication job. Hosted server deployment remains a separate operation.
 
 Version 0.4.2 adds account-change confirmation and untrusted-content notices to all successful project tool results. The default endpoint is `https://maddots.app/mcp`, and credentials are not copied between origins. After pairing with maddots.app, revoke the old pm.ibl.ro connection in Integrations.
 
 ## Compatibility with the hosted service
 
-Release 0.4.2 includes the optional `dueAt` UTC deadline in `create_task` and `update_task`, matching the hosted catalog. Version 0.4.1 predates those schema fields and cannot pass discovery against that catalog, including before a read. Tool discovery still validates every input and output schema; it never bypasses a mismatch.
+The current client includes the optional `dueAt` UTC deadline in `create_task` and `update_task`, matching the hosted catalog. Version 0.4.1 predates those schema fields and cannot pass discovery against that catalog, including before a read. Tool discovery still validates every input and output schema; it never bypasses a mismatch.
 
-If approval is saved and all 26 local tools appear but a project call returns `REMOTE_CONTRACT_MISMATCH`, update this same installation to the signed release above, rebuild it, and restart the MCP host connection. The local tool list alone does not verify remote compatibility. Keep the existing endpoint and credential directory: a valid saved approval is reused. Run `node dist/cli.js --setup` to check authentication and catalog compatibility, then ask the host to call `list_projects`. Pair again only if authorization has expired or been revoked.
+If approval is saved and all 26 local tools appear but a project call returns `REMOTE_CONTRACT_MISMATCH`, check `--status`, apply a verified update with `--update`, and reconnect the host if requested. A pre-0.5 bootstrap needs the one-time migration above. The local tool list alone does not verify remote compatibility. Keep the existing endpoint and credential directory: a valid saved approval is reused. Run `node dist/cli.js --setup` to check authentication and catalog compatibility, then ask the host to call `list_projects`. Pair again only if authorization has expired or been revoked.

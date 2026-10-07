@@ -25,7 +25,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const run = promisify(execFile);
 const syntheticToken = 'pm_test_only_not_a_real_credential_123456789';
 const cli = join(root, 'dist/cli.js');
-const cleanEnv = () => Object.fromEntries(Object.entries(process.env).filter(([key, value]) => !key.startsWith('PM_MCP_') && typeof value === 'string'));
+const cleanEnv = () => ({ ...Object.fromEntries(Object.entries(process.env).filter(([key, value]) => !key.startsWith('PM_MCP_') && typeof value === 'string')), PM_MCP_AUTO_UPDATE: '0' });
 
 async function fixture(t, { catalog = TOOL_DEFINITIONS, disconnect = false, redirectTo, toolResult, getRedirectTo } = {}) {
   const calls = [];
