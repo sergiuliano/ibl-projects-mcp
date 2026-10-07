@@ -163,14 +163,40 @@ export function createReleaseVerifier(verifier: typeof verifyReleaseBundle = ver
     return release;
   };
 }
-async function download(url: string, limit: number, infrastructure: PackageInfrastructure, signal?: AbortSignal): Promise<Buffer> {
+interface DownloadFixture { fetch: typeof fetch; timeoutMs?: number }
+// The optional adapter is only a deterministic test seam, never selected through CLI or environment.
+export async function downloadRelease(url: string, limit: number, infrastructure: PackageInfrastructure, signal?: AbortSignal, fixture?: DownloadFixture): Promise<Buffer> {
   if (infrastructure.offline) throw new Error('NETWORK_OFFLINE');
-  const fetchOptions: FetchOptions & { signal?: AbortSignal } = { signal, timeout: 30000, retry: 0, size: limit, proxy: infrastructure.proxy, noProxy: infrastructure.noProxy, ca: infrastructure.ca, strictSSL: infrastructure.strictSSL, redirect: 'follow', follow: 5, headers: { 'user-agent': 'MadDots-MCP-updater' } };
-  const response = await fetch(url, fetchOptions);
-  if (!response.ok || !response.url.startsWith('https://')) throw new Error('NETWORK_UNAVAILABLE');
-  const bytes = await response.buffer();
-  if (bytes.length > limit) throw new Error('ARTIFACT_TOO_LARGE');
-  return bytes;
+  const secure = (value: string): boolean => { try { const parsed = new URL(value); return parsed.protocol === 'https:' && !parsed.username && !parsed.password; } catch { return false; } };
+  if (!secure(url)) throw new Error('NETWORK_UNAVAILABLE');
+  const controller = new AbortController();
+  const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+  let body: (AsyncIterable<Uint8Array> & { destroy(error?: Error): unknown }) | undefined;
+  const abort = (): void => { body?.destroy(new Error('NETWORK_UNAVAILABLE')); };
+  combined.addEventListener('abort', abort, { once: true });
+  // A single deadline covers both response headers and the entire streamed body.
+  const timer = setTimeout(() => controller.abort(), fixture?.timeoutMs ?? 30000);
+  try {
+    if (combined.aborted) throw new Error('NETWORK_UNAVAILABLE');
+    // make-fetch-happen's size option is an exact integrity length, not a maximum. Enforce our bound while streaming.
+    const fetchOptions: FetchOptions & { signal?: AbortSignal } = { signal: combined, timeout: 30000, retry: 0, proxy: infrastructure.proxy, noProxy: infrastructure.noProxy, ca: infrastructure.ca, strictSSL: infrastructure.strictSSL, redirect: 'follow', follow: 5, headers: { 'user-agent': 'MadDots-MCP-updater' } };
+    const response = await (fixture?.fetch || fetch)(url, fetchOptions);
+    body = response.body as unknown as typeof body;
+    if (combined.aborted || !response.ok || !secure(response.url) || !body) throw new Error('NETWORK_UNAVAILABLE');
+    const chunks: Buffer[] = []; let size = 0;
+    for await (const chunk of body) {
+      size += chunk.length;
+      if (size > limit) throw new Error('ARTIFACT_TOO_LARGE');
+      chunks.push(Buffer.from(chunk));
+    }
+    if (combined.aborted) throw new Error('NETWORK_UNAVAILABLE');
+    return Buffer.concat(chunks, size);
+  } catch (error) {
+    controller.abort();
+    throw new Error(error instanceof Error && error.message === 'ARTIFACT_TOO_LARGE' ? 'ARTIFACT_TOO_LARGE' : 'NETWORK_UNAVAILABLE');
+  } finally {
+    clearTimeout(timer); combined.removeEventListener('abort', abort); body?.destroy();
+  }
 }
 // Isolate verification network options and secrets from the MCP process. npm's proxy/CA settings also apply to Sigstore TUF.
 async function configuredVerification(options: UpdateOptions, bytes: Buffer, infrastructure: PackageInfrastructure): Promise<SignedRelease> {
@@ -200,7 +226,7 @@ async function configuredVerification(options: UpdateOptions, bytes: Buffer, inf
 }
 const verifiedBundles = new Map<string, { digest: string; release: SignedRelease }>();
 async function signedLatest(options: UpdateOptions, infrastructure: PackageInfrastructure): Promise<SignedRelease> {
-  const bytes = await download('https://github.com/' + repository(options) + '/releases/latest/download/client-update.sigstore.json', 1024 * 1024, infrastructure, options.signal);
+  const bytes = await downloadRelease('https://github.com/' + repository(options) + '/releases/latest/download/client-update.sigstore.json', 1024 * 1024, infrastructure, options.signal);
   const key = updateDirectory(options), digest = createHash('sha256').update(bytes).digest('hex'), cached = verifiedBundles.get(key);
   if (cached?.digest === digest) return { ...cached.release };
   const release = await configuredVerification(options, bytes, infrastructure);
@@ -208,7 +234,7 @@ async function signedLatest(options: UpdateOptions, infrastructure: PackageInfra
   return release;
 }
 async function prepareSigned(options: UpdateOptions, release: SignedRelease, target: string, infrastructure: PackageInfrastructure): Promise<void> {
-  const bytes = await download('https://github.com/' + repository(options) + '/releases/download/client-' + release.commit + '/' + ARTIFACT, 24 * 1024 * 1024, infrastructure, options.signal);
+  const bytes = await downloadRelease('https://github.com/' + repository(options) + '/releases/download/client-' + release.commit + '/' + ARTIFACT, 24 * 1024 * 1024, infrastructure, options.signal);
   verifyArtifactDigest(bytes, release.sha256);
   const file = join(target, ARTIFACT); await writeFile(file, bytes, { flag: 'wx', mode: 0o600 });
   let safe = true, total = 0, count = 0; const paths = new Set<string>();

@@ -129,6 +129,6 @@ jobs:
                 "$release_dir/client-update.tgz.sha256" \
                 --repo "$GITHUB_REPOSITORY" --verify-tag --latest=false \
                 --title "MadDots MCP bootstrap $version" \
-                --notes "Version-pinned bootstrap from the trusted signed source tag. Assets are identical to client-$GITHUB_SHA. Existing pre-0.5 clients need one manual upgrade and host restart to enable verified automatic runtime updates. npm publication remains disabled."
+                --notes "Version-pinned bootstrap from the trusted signed source tag. Assets are identical to client-$GITHUB_SHA. Existing clients older than 0.5.1 need one manual upgrade and host restart to enable verified automatic runtime updates. npm publication remains disabled."
             fi
           fi

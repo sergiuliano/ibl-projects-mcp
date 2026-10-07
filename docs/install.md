@@ -4,17 +4,17 @@ Requirements: Node.js 22.22.2 or later in the Node 22 series, or Node.js 24.15.0
 
 ## Install the version-pinned bootstrap
 
-The client is distributed through [sergiuliano/ibl-projects-mcp releases](https://github.com/sergiuliano/ibl-projects-mcp/releases), with npm publication disabled. Use these commands only after `v0.5.0` and its `client-update.tgz` asset exist. Do not run `npm install ibl-projects-mcp` or `npx ibl-projects-mcp`, which would look for an unpublished registry package.
+The client is distributed through [sergiuliano/ibl-projects-mcp releases](https://github.com/sergiuliano/ibl-projects-mcp/releases), with npm publication disabled. Use these commands only after `v0.5.1` and its `client-update.tgz` asset exist. Do not run `npm install ibl-projects-mcp` or `npx ibl-projects-mcp`, which would look for an unpublished registry package.
 
 ```sh
-npm install --global --ignore-scripts https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.5.0/client-update.tgz
+npm install --global --ignore-scripts https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.5.1/client-update.tgz
 ibl-projects-mcp --setup
 ```
 
 A version-pinned npx invocation is also supported:
 
 ```sh
-npx --yes --ignore-scripts --package=https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.5.0/client-update.tgz ibl-projects-mcp --setup
+npx --yes --ignore-scripts --package=https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.5.1/client-update.tgz ibl-projects-mcp --setup
 ```
 
 These direct URL commands trust the GitHub release distribution channel for the first bootstrap. To verify that archive against the trusted source tag and the release workflow before executing it, use [artifact verification](#verify-the-bootstrap-artifact), then install the verified local archive. Later automatic runtime downloads always require the fixed workflow's Sigstore attestation.
@@ -29,7 +29,7 @@ Setup shows a browser link and an eight-character code. Open the link, sign in t
       "args": [
         "--yes",
         "--ignore-scripts",
-        "--package=https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.5.0/client-update.tgz",
+        "--package=https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.5.1/client-update.tgz",
         "ibl-projects-mcp"
       ]
     }
@@ -44,10 +44,10 @@ The bootstrap version stays pinned in this configuration while verified compatib
 First configure [release signing trust](#trust-the-release-signing-key), then verify the exact tag before installing dependencies:
 
 ```sh
-git clone --branch v0.5.0 --depth 1 https://github.com/sergiuliano/ibl-projects-mcp.git &&
+git clone --branch v0.5.1 --depth 1 https://github.com/sergiuliano/ibl-projects-mcp.git &&
 cd ibl-projects-mcp &&
 git config gpg.ssh.allowedSignersFile /ABSOLUTE/PATH/allowed_signers &&
-git verify-tag v0.5.0 &&
+git verify-tag v0.5.1 &&
 npm ci --ignore-scripts &&
 npm run build &&
 node dist/cli.js --setup
@@ -69,7 +69,7 @@ Configure this checkout to use the file:
 
 ```sh
 git config gpg.ssh.allowedSignersFile /ABSOLUTE/PATH/allowed_signers
-git verify-tag v0.5.0
+git verify-tag v0.5.1
 ```
 
 Continue only when Git reports a good signature for `sergiuliano` with the verified fingerprint. Do not trust every key in the downloaded list automatically. A changed signing key requires a new confirmation with the owner.
@@ -79,17 +79,17 @@ Continue only when Git reports a good signature for `sergiuliano` with the verif
 After cloning the pinned source tag and configuring the allowed-signers file above, verify the tag, download all three assets into a new empty directory, and verify the artifact against the exact signed source commit. The release workflow publishes the same archive under both its commit release and the signed version's bootstrap release.
 
 ```sh
-git verify-tag v0.5.0 &&
+git verify-tag v0.5.1 &&
 mkdir bootstrap-download &&
-gh release download v0.5.0 --repo sergiuliano/ibl-projects-mcp --dir bootstrap-download \
+gh release download v0.5.1 --repo sergiuliano/ibl-projects-mcp --dir bootstrap-download \
   --pattern client-update.tgz --pattern client-update.sigstore.json --pattern client-update.tgz.sha256 &&
 gh attestation verify bootstrap-download/client-update.tgz \
   --bundle bootstrap-download/client-update.sigstore.json \
   --repo sergiuliano/ibl-projects-mcp \
   --cert-identity 'https://github.com/sergiuliano/ibl-projects-mcp/.github/workflows/client-release.yml@refs/heads/main' \
   --cert-oidc-issuer https://token.actions.githubusercontent.com \
-  --source-ref refs/heads/main --source-digest "$(git rev-parse 'v0.5.0^{commit}')" \
-  --signer-digest "$(git rev-parse 'v0.5.0^{commit}')" --deny-self-hosted-runners &&
+  --source-ref refs/heads/main --source-digest "$(git rev-parse 'v0.5.1^{commit}')" \
+  --signer-digest "$(git rev-parse 'v0.5.1^{commit}')" --deny-self-hosted-runners &&
 npm install --global --ignore-scripts ./bootstrap-download/client-update.tgz
 ```
 
@@ -158,12 +158,12 @@ An explicit local endpoint such as `http://127.0.0.1:PORT/mcp` also requires `PM
 
 ## One-time migration from 0.4.x
 
-Clients released before 0.5.0 cannot install the new supervisor automatically. Stop the host's MCP connection, update the bootstrap once, then restart the connection. For a source checkout, preserve the existing directory and verify the exact signed tag before changing it:
+Clients released before 0.5.1 cannot install the new supervisor automatically. Stop the host's MCP connection, update the bootstrap once, then restart the connection. For a source checkout, preserve the existing directory and verify the exact signed tag before changing it:
 
 ```sh
-git fetch origin tag v0.5.0 &&
-git verify-tag v0.5.0 &&
-git checkout --detach v0.5.0 &&
+git fetch origin tag v0.5.1 &&
+git verify-tag v0.5.1 &&
+git checkout --detach v0.5.1 &&
 npm ci --ignore-scripts &&
 npm run build &&
 node dist/cli.js --setup
@@ -173,7 +173,9 @@ For npm or npx, install the versioned GitHub release archive above and update th
 
 ## Automatic runtime updates
 
-The 0.5.0 bootstrap runs a stable supervisor and an isolated runtime worker. On startup and every five minutes, it checks the public `sergiuliano/ibl-projects-mcp` release channel. Every runtime archive must have a valid Sigstore bundle with GitHub SLSA provenance from `.github/workflows/client-release.yml` on `refs/heads/main` in that exact repository. The verified source commit selects the immutable `client-<commit>` asset URL; the verified digest must match the downloaded archive. An unsigned release, an unrelated signer, a changed digest or an invalid package is rejected.
+Version 0.5.1 corrects the initial 0.5.0 download reader. If you installed 0.5.0, perform the one-time manual upgrade too: its automatic downloader cannot fetch the correction. Signed 0.5.0 tags and artifacts are retained unchanged.
+
+The 0.5.1 bootstrap runs a stable supervisor and an isolated runtime worker. On startup and every five minutes, it checks the public `sergiuliano/ibl-projects-mcp` release channel. Every runtime archive must have a valid Sigstore bundle with GitHub SLSA provenance from `.github/workflows/client-release.yml` on `refs/heads/main` in that exact repository. The verified source commit selects the immutable `client-<commit>` asset URL; the verified digest must match the downloaded archive. An unsigned release, an unrelated signer, a changed digest or an invalid package is rejected.
 
 The updater stages the archive separately from your checkout, installs its locked production dependencies with lifecycle scripts disabled and checks the candidate before selecting it. The live supervisor switches a compatible worker only after 60 seconds without a tool call, with no active requests. It does not terminate or replay a running operation to apply an update. When a worker can switch safely, the host's connection remains open.
 
@@ -211,4 +213,4 @@ Version 0.4.2 adds account-change confirmation and untrusted-content notices to 
 
 The current client includes the optional `dueAt` UTC deadline in `create_task` and `update_task`, matching the hosted catalog. Version 0.4.1 predates those schema fields and cannot pass discovery against that catalog, including before a read. Tool discovery still validates every input and output schema; it never bypasses a mismatch.
 
-If approval is saved and all 26 local tools appear but a project call returns `REMOTE_CONTRACT_MISMATCH`, check `--status`, apply a verified update with `--update`, and reconnect the host if requested. A pre-0.5 bootstrap needs the one-time migration above. The local tool list alone does not verify remote compatibility. Keep the existing endpoint and credential directory: a valid saved approval is reused. Run `node dist/cli.js --setup` to check authentication and catalog compatibility, then ask the host to call `list_projects`. Pair again only if authorization has expired or been revoked.
+If approval is saved and all 26 local tools appear but a project call returns `REMOTE_CONTRACT_MISMATCH`, check `--status`, apply a verified update with `--update`, and reconnect the host if requested. A pre-0.5.1 bootstrap needs the one-time migration above. The local tool list alone does not verify remote compatibility. Keep the existing endpoint and credential directory: a valid saved approval is reused. Run `node dist/cli.js --setup` to check authentication and catalog compatibility, then ask the host to call `list_projects`. Pair again only if authorization has expired or been revoked.

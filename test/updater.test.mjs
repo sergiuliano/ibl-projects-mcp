@@ -3,12 +3,15 @@ import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import process from 'node:process';
 import { createHash } from 'node:crypto';
+import { createServer } from 'node:http';
+import { URL } from 'node:url';
+import fetch from 'make-fetch-happen';
 import { chmod, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setImmediate as immediate } from 'node:timers/promises';
 import test from 'node:test';
-import { checkForUpdate, createReleaseVerifier, diagnosticStatus, releaseFromStatement, rollbackRelease, selectRelease, startUpdateChecks, UPDATE_CHECK_INTERVAL_MS, UPDATE_REPOSITORY, updateDirectory, verifyArtifactDigest, verifyReleaseBundle } from '../dist/updater.js';
+import { checkForUpdate, createReleaseVerifier, diagnosticStatus, downloadRelease, releaseFromStatement, rollbackRelease, selectRelease, startUpdateChecks, UPDATE_CHECK_INTERVAL_MS, UPDATE_REPOSITORY, updateDirectory, verifyArtifactDigest, verifyReleaseBundle } from '../dist/updater.js';
 import { discoverNpm, installEnvironment, packageInfrastructure } from '../dist/npm.js';
 const digest = createHash('sha256').update('fixture artifact').digest('hex');
 const commitA = 'a'.repeat(40), commitB = 'b'.repeat(40);
@@ -202,4 +205,57 @@ test('nonexistent state and token paths cannot later enter the cache through exi
     await assert.rejects(readFile(protectedPath), error => error.code === 'ENOENT');
   }
   assert.equal((await selectRelease(options)).commit, commitA);
+});
+
+async function downloadFixture(t, handle) {
+  const server = createServer(handle);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
+  const address = `http://127.0.0.1:${server.address().port}`;
+  return {
+    async fetch(url, options) {
+      assert.equal(options.size, undefined, 'maximum byte count must not become make-fetch-happen exact integrity size');
+      assert.equal(options.headers.authorization, undefined);
+      const response = await fetch(address + new URL(url).pathname, { ...options, proxy: undefined, noProxy: '127.0.0.1' });
+      // This adapter changes only test transport routing. Production still requires credential-free HTTPS responses.
+      return { ok: response.ok, url, body: response.body };
+    },
+  };
+}
+const downloadInfrastructure = { env: {}, npm: { command: 'unused', args: [] }, strictSSL: true, offline: false };
+test('real make-fetch-happen accepts release bytes smaller than the maximum and exactly at the limit', async t => {
+  const bytes = Buffer.from('signed fixture body');
+  const adapter = await downloadFixture(t, (_req, res) => { res.writeHead(200, { 'Content-Length': bytes.length }); res.end(bytes); });
+  assert.deepEqual(await downloadRelease('https://release.example.test/artifact', 1024, downloadInfrastructure, undefined, adapter), bytes);
+  assert.deepEqual(await downloadRelease('https://release.example.test/artifact', bytes.length, downloadInfrastructure, undefined, adapter), bytes);
+});
+test('real make-fetch-happen streams enforce a maximum and close oversized transfers', async t => {
+  let closed;
+  const disconnected = new Promise(resolve => { closed = resolve; });
+  const adapter = await downloadFixture(t, (_req, res) => { res.on('close', closed); res.writeHead(200); res.write(Buffer.alloc(64)); });
+  await assert.rejects(downloadRelease('https://release.example.test/artifact', 32, downloadInfrastructure, undefined, adapter), /ARTIFACT_TOO_LARGE/);
+  await disconnected;
+});
+test('real make-fetch-happen transport failures are redacted and partial bodies are rejected', async t => {
+  const adapter = await downloadFixture(t, (req, res) => {
+    if (req.url === '/status') { res.writeHead(503); res.end('untrusted diagnostic with fixture-secret'); return; }
+    res.writeHead(200, { 'Content-Length': 50 }); res.write('partial'); res.socket.destroy();
+  });
+  for (const path of ['/status', '/broken']) await assert.rejects(downloadRelease('https://release.example.test' + path, 1024, downloadInfrastructure, undefined, adapter), error => error.message === 'NETWORK_UNAVAILABLE');
+});
+test('real make-fetch-happen full-body deadline and caller abort stop stalled streams', async t => {
+  let closed = 0;
+  const adapter = await downloadFixture(t, (_req, res) => { res.on('close', () => { closed++; }); res.writeHead(200); res.write('begin'); });
+  await assert.rejects(downloadRelease('https://release.example.test/artifact', 1024, downloadInfrastructure, undefined, { ...adapter, timeoutMs: 50 }), /NETWORK_UNAVAILABLE/);
+  const controller = new globalThis.AbortController();
+  const pending = downloadRelease('https://release.example.test/artifact', 1024, downloadInfrastructure, controller.signal, adapter);
+  controller.abort(); await assert.rejects(pending, /NETWORK_UNAVAILABLE/);
+  for (let index = 0; index < 20 && closed < 1; index++) await immediate();
+  assert.ok(closed >= 1, 'timed-out response closed');
+});
+test('release download requires HTTPS without URL credentials and honors offline mode before fetching', async () => {
+  let requests = 0; const adapter = { fetch: async () => { requests++; throw new Error('must not run'); } };
+  for (const url of ['http://release.example.test/artifact', 'https://user:fixture-secret@release.example.test/artifact']) await assert.rejects(downloadRelease(url, 1024, downloadInfrastructure, undefined, adapter), /NETWORK_UNAVAILABLE/);
+  await assert.rejects(downloadRelease('https://release.example.test/artifact', 1024, { ...downloadInfrastructure, offline: true }, undefined, adapter), /NETWORK_OFFLINE/);
+  assert.equal(requests, 0);
 });
