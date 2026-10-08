@@ -39,6 +39,43 @@ test('setup authorization is never retried or rolled back after an uncertain fai
   assert.equal(calls, 1); assert.equal(rollbacks, 0);
 });
 
+test('setup reconnect accepts every flag order and forwards one explicit authorization attempt', async () => {
+  const variants = [
+    ['--setup', '--reconnect'], ['--reconnect', '--setup'],
+    ['--setup', '--reconnect', '--read-only'], ['--setup', '--read-only', '--reconnect'],
+    ['--reconnect', '--setup', '--read-only'], ['--reconnect', '--read-only', '--setup'],
+    ['--read-only', '--setup', '--reconnect'], ['--read-only', '--reconnect', '--setup'],
+  ];
+  for (const args of variants) {
+    let calls = 0, rollbacks = 0;
+    await launch(args, { options, check: async () => {}, select: async () => ({ root: '/fixture/prepared', commit: 'b'.repeat(40) }), rollback: async () => { rollbacks++; }, run: async actual => { calls++; assert.deepEqual(actual, args); } });
+    assert.equal(calls, 1);
+    assert.equal(rollbacks, 0);
+  }
+});
+
+test('reconnect cannot run outside setup or alongside unrelated or duplicate flags', async () => {
+  for (const args of [
+    ['--reconnect'], ['--reconnect', '--read-only'], ['--read-only'],
+    ['--setup', '--reconnect', '--reconnect'], ['--setup', '--setup'],
+    ['--setup', '--reconnect', '--status'], ['--setup', '--reconnect', '--update'],
+    ['--setup', '--reconnect', '--self-test'], ['--setup', '--help'],
+  ]) {
+    await assert.rejects(launch(args, {
+      options, check: async () => { assert.fail('Invalid arguments cannot start update checks.'); },
+      select: async () => { assert.fail('Invalid arguments cannot select a runtime.'); },
+      run: async () => { assert.fail('Invalid arguments cannot start authorization.'); },
+    }), error => error.code === 'CLI_ARGUMENTS');
+  }
+});
+
+test('setup reconnect authorization is never retried after a failed runtime', async () => {
+  let calls = 0, rollbacks = 0;
+  await assert.rejects(launch(['--setup', '--reconnect'], { options, check: async () => {}, select: async () => ({ root: '/fixture/prepared', commit: 'b'.repeat(40) }), rollback: async () => { rollbacks++; }, run: async () => { calls++; throw new Error('Uncertain replacement outcome.'); } }));
+  assert.equal(calls, 1);
+  assert.equal(rollbacks, 0);
+});
+
 test('disabling automatic checks still permits a verified cached runtime', async () => {
   let checked = false, selected = false;
   await launch([], { options: { ...options, env: { PM_MCP_AUTO_UPDATE: '0' } }, check: async () => { checked = true; }, select: async () => ({ root: '/fixture/cached' }), run: async () => { selected = true; } });

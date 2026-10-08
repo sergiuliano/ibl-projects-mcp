@@ -309,6 +309,39 @@ test('host elicitation confirmation cannot be bypassed and a decline preserves a
   assert.equal(confirmations, 2);
 });
 
+test('confirmation outcomes stay distinct and cannot be overridden by confirm true', async t => {
+  for (const action of ['reconnect', 'disconnect']) {
+    for (const [outcome, confirmation] of [[false, 'declined'], ['cancelled', 'cancelled'], ['not_confirmed', 'not_confirmed']]) {
+      const fixture = accountFixture({ credential: credential(), confirmReconnect: async () => outcome });
+      t.after(() => fixture.account.close());
+      await fixture.account.callTool('list_projects', {});
+      const response = await fixture.account.callTool('connect_account', { action, confirm: true });
+      assert.equal(response.structuredContent.status, action + '_cancelled');
+      assert.equal(response.structuredContent.confirmation, confirmation);
+      if (confirmation === 'declined') assert.match(response.structuredContent.instructions, /declined/i);
+      else assert.doesNotMatch(response.structuredContent.instructions, /user declined/i);
+      safeOutput(response);
+      assert.equal(fixture.started(), 0);
+      assert.equal(fixture.saved.length, 0);
+      assert.equal(fixture.removed.length, 0);
+      assert.equal((await fixture.account.callTool('list_projects', {})).structuredContent.ok, true);
+      assert.equal((await fixture.account.callTool('connect_account', { action: 'status' })).structuredContent.account.name, 'Fixture User');
+    }
+  }
+});
+
+test('elicitation failure preserves authorization and does not fall back to confirm true', async t => {
+  const fixture = accountFixture({ credential: credential(), confirmReconnect: async () => { throw new Error('Untrusted host error ' + secret); } });
+  t.after(() => fixture.account.close());
+  const response = await fixture.account.callTool('connect_account', { action: 'reconnect', confirm: true });
+  assert.equal(response.isError, true);
+  safeOutput(response);
+  assert.equal(fixture.started(), 0);
+  assert.equal(fixture.saved.length, 0);
+  assert.equal(fixture.removed.length, 0);
+  assert.equal((await fixture.account.callTool('list_projects', {})).structuredContent.ok, true);
+});
+
 test('first-time connect does not request reconnect confirmation and tool guidance protects approval codes', async t => {
   const fixture = accountFixture({ confirmReconnect: () => { throw new Error('First connection must not request confirmation.'); } });
   t.after(() => fixture.account.close());
@@ -473,10 +506,12 @@ test('stdio starts without credentials, pairs in the background, and reuses a sa
   assert.equal(first.stderr() + second.stderr(), '');
 });
 
-test('stdio uses host elicitation before replacing a stored account and preserves it on decline', { timeout: 10_000 }, async t => {
+test('stdio distinguishes host confirmation outcomes and preserves the stored account until acceptance', { timeout: 10_000 }, async t => {
   const fixture = await httpFixture(t);
-  await new CredentialStore(new URL(fixture.env.PM_MCP_URL), fixture.env).save(credential(new URL(fixture.env.PM_MCP_URL)));
-  let confirmed = false, prompts = 0;
+  const store = new CredentialStore(new URL(fixture.env.PM_MCP_URL), fixture.env);
+  await store.save(credential(new URL(fixture.env.PM_MCP_URL)));
+  const original = await readFile(store.path, 'utf8');
+  let answer = { action: 'cancel' }, prompts = 0;
   const host = await stdio(t, fixture.env, async request => {
     if (request.params.requestedSchema.required.includes('acknowledged')) { assert.match(request.params.message, /ABCD2345/); return { action: 'accept', content: { acknowledged: true } }; }
     prompts++;
@@ -484,17 +519,27 @@ test('stdio uses host elicitation before replacing a stored account and preserve
     assert.deepEqual(request.params.requestedSchema.required, ['confirm']);
     assert.equal(request.params.requestedSchema.properties.confirm.type, 'boolean');
     assert.equal(request.params.requestedSchema.properties.confirm.default, false);
-    return { action: 'accept', content: { confirm: confirmed } };
+    return answer;
   });
-  const denied = await host.client.callTool({ name: 'connect_account', arguments: { action: 'reconnect', confirm: true } });
-  assert.equal(denied.structuredContent.status, 'reconnect_cancelled');
-  assert.equal(fixture.registrations(), 0);
-  await host.client.callTool({ name: 'list_projects', arguments: {} });
-  assert.equal(fixture.calls.length, 1);
-  confirmed = true;
+  for (const [response, confirmation] of [
+    [{ action: 'cancel' }, 'cancelled'],
+    [{ action: 'decline' }, 'declined'],
+    [{ action: 'accept', content: { confirm: false } }, 'not_confirmed'],
+  ]) {
+    answer = response;
+    const denied = await host.client.callTool({ name: 'connect_account', arguments: { action: 'reconnect', confirm: true } });
+    assert.equal(denied.structuredContent.status, 'reconnect_cancelled');
+    assert.equal(denied.structuredContent.confirmation, confirmation);
+    safeOutput(denied);
+    assert.equal(fixture.registrations(), 0);
+    assert.equal(await readFile(store.path, 'utf8'), original);
+    await host.client.callTool({ name: 'list_projects', arguments: {} });
+  }
+  assert.equal(fixture.calls.length, 3);
+  answer = { action: 'accept', content: { confirm: true } };
   assert.equal((await host.client.callTool({ name: 'connect_account', arguments: { action: 'reconnect' } })).structuredContent.status, 'pending');
   assert.equal(fixture.registrations(), 1);
-  assert.equal(prompts, 2);
+  assert.equal(prompts, 4);
 });
 
 test('interactive setup shows code and link, remembers approval, and never calls a business tool', { timeout: 15_000 }, async t => {
@@ -521,6 +566,83 @@ test('setup --read-only requests and persists only kanban:read', { timeout: 10_0
   assert.deepEqual(stored.scopes, ['kanban:read']);
   assert.equal(fixture.calls.length, 0);
   assert.equal(fixture.registrations(), 1);
+});
+
+test('terminal setup reconnect replaces an existing saved approval and ordinary setup reuses it', { timeout: 15_000 }, async t => {
+  const fixture = await httpFixture(t, ['kanban:read']);
+  const store = new CredentialStore(new URL(fixture.env.PM_MCP_URL), fixture.env);
+  await store.save(credential(new URL(fixture.env.PM_MCP_URL), 'Original account'));
+  const oldHost = await stdio(t, fixture.env);
+  const originalStatus = await oldHost.client.callTool({ name: 'connect_account', arguments: { action: 'status' } });
+  assert.equal(originalStatus.structuredContent.account.name, 'Original account');
+  const output = await run(process.execPath, [cli, '--read-only', '--reconnect', '--setup'], { env: fixture.env, timeout: 10_000 });
+  assert.match(output.stdout, /Enter code: ABCD2345/);
+  assert.match(output.stdout, /reconnect|restart/i);
+  assert.match(output.stdout, /No tool operation was submitted/);
+  assert.equal(output.stderr, '');
+  safeOutput(output);
+  assert.equal(fixture.registrations(), 1);
+  assert.equal(fixture.polls(), 1);
+  assert.equal(fixture.calls.length, 0);
+  const stored = await store.load();
+  assert.equal(stored.account.name, 'Fixture User');
+  assert.deepEqual(stored.scopes, ['kanban:read']);
+  const stillRunning = await oldHost.client.callTool({ name: 'connect_account', arguments: { action: 'status' } });
+  assert.equal(stillRunning.structuredContent.account.name, 'Original account');
+  await oldHost.client.close();
+  const freshHost = await stdio(t, fixture.env);
+  const freshStatus = await freshHost.client.callTool({ name: 'connect_account', arguments: { action: 'status' } });
+  assert.equal(freshStatus.structuredContent.account.name, 'Fixture User');
+  const reused = await run(process.execPath, [cli, '--setup'], { env: fixture.env, timeout: 5000 });
+  assert.doesNotMatch(reused.stdout, /Enter code/);
+  safeOutput(reused);
+  assert.equal(fixture.registrations(), 1);
+  assert.equal(fixture.polls(), 1);
+  assert.equal(fixture.calls.length, 0);
+});
+
+test('setup reconnect reports replacement failure while preserving the ready original account', async t => {
+  for (const outcome of ['contract', 'storage', 'denied']) {
+    let saved = credential(url, 'Original'), claim, reject, registrations = 0;
+    const original = saved;
+    const writes = [], calls = [];
+    const expectedCode = { contract: 'REMOTE_CONTRACT_MISMATCH', storage: 'CREDENTIAL_STORE_UNAVAILABLE', denied: 'PAIRING_ENDED' }[outcome];
+    const account = new AccountService({}, {
+      store: { load: async () => saved, save: async value => { writes.push(value); if (outcome === 'storage') return { persisted: false }; saved = value; return { persisted: true }; }, remove: async () => { assert.fail('Reconnect cannot delete the original credential.'); } },
+      makeRemote: () => {
+        let identity;
+        return {
+          initialize: async token => { identity = token; if (token !== secret && outcome === 'contract') throw new BridgeError('REMOTE_CONTRACT_MISMATCH', 'Mismatch.'); return token === secret ? 'workspace' : 'all'; },
+          close: async () => {},
+          callTool: async () => { calls.push(identity); return { content: [], structuredContent: { ok: true } }; },
+        };
+      },
+      makeFlow: () => {
+        registrations++;
+        const done = new Promise((resolve, fail) => { claim = resolve; reject = fail; }); void done.catch(() => {});
+        return { start: async () => ({}), snapshot: () => ({ status: 'pending' }), wait: () => done, cancel: () => reject(new BridgeError('PAIRING_CANCELLED', 'Cancelled.')) };
+      },
+    });
+    t.after(() => account.close());
+    assert.equal(await account.workspaceAccess(), false);
+    const replacement = account.setup(() => {}, false, true);
+    const failure = assert.rejects(replacement, error => error.code === expectedCode);
+    await settle();
+    assert.equal(registrations, 1);
+    assert.equal((await account.callTool('list_projects', {})).structuredContent.ok, true);
+    if (outcome === 'denied') reject(new BridgeError('PAIRING_ENDED', 'Denied.'));
+    else claim({ ...credential(url, 'Replacement'), secret: 'pm_candidate_test_only_1234567890' });
+    await failure;
+    assert.equal(saved, original);
+    assert.equal(writes.length, outcome === 'storage' ? 1 : 0);
+    const status = await account.callTool('connect_account', { action: 'status' });
+    assert.equal(status.structuredContent.status, 'connected');
+    assert.equal(status.structuredContent.account.name, 'Original');
+    assert.equal(status.structuredContent.replacementError.code, expectedCode);
+    assert.equal((await account.callTool('list_projects', {})).structuredContent.ok, true);
+    assert.deepEqual(calls, [secret, secret]);
+    safeOutput(status);
+  }
 });
 
 test('pairing HTTP redirects cannot forward the polling secret', async t => {

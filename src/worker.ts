@@ -33,7 +33,9 @@ export async function runWorker(): Promise<void> {
         message: action === 'disconnect' ? 'Disconnect the current MadDots account and delete its saved credential for this endpoint?' : 'Replace the current MadDots account connection? Your current connection stays active until the new approval is verified.',
         requestedSchema: { type: 'object', properties: { confirm: { type: 'boolean', title: action === 'disconnect' ? 'Disconnect current connection' : 'Replace current connection', default: false } }, required: ['confirm'] },
       }, { signal });
-      return response.action === 'accept' && response.content?.confirm === true;
+      if (response.action === 'cancel') return 'cancelled';
+      if (response.action === 'decline') return false;
+      return response.content?.confirm === true ? true : 'not_confirmed';
     },
     presentPairing: async (pending, signal) => {
       if (!hostElicitation) return false;

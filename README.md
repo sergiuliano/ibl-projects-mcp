@@ -1,31 +1,31 @@
 # MadDots MCP client
 
-Connect an MCP host to your MadDots account through a local stdio client. Ask the host to call `connect_account`, open the returned browser link, and approve the eight-character code in MadDots. You do not need to copy a token. The client shows the code through host form elicitation when supported, keeping it out of tool results; otherwise it returns the code to your MCP host. It checks for approval in the background for up to five minutes.
+Connect an MCP host to your MadDots account through a local stdio client. Ask the host to call `connect_account`, open https://maddots.app/integrations, and approve the eight-character code in MadDots. You do not need to copy a token. The client shows the code through host form elicitation when supported, keeping it out of tool results; otherwise it returns the code to your MCP host. It checks for approval in the background for up to five minutes.
 
 During browser approval, choose all accessible workspaces (including ones you gain access to later) or restrict the connection to the selected workspace. Existing credentials keep their approved scope until you explicitly reconnect and approve a replacement. You can request read-only or read/write account access; the server continues to enforce your current project permissions. Sharing and membership administration stay in the MadDots interface.
 
 This client requires an MCP-enabled MadDots server with account pairing enabled. The default endpoint is `https://maddots.app/mcp`; availability depends on the operator's separate server deployment. Publishing or installing this client does not deploy or enable that service. The application server, database, private implementation, and deployment configuration are not included.
 
-Follow [the installation guide](docs/install.md) to install the version-pinned `v0.6.0` bootstrap from GitHub or build the signed source tag. The package is not published to the npm registry and remains `private: true`.
+Follow [the installation guide](docs/install.md) to install the version-pinned `v0.6.1` bootstrap from GitHub or build the signed source tag. The package is not published to the npm registry and remains `private: true`.
 
 For npm and npx, use the GitHub release tarball URL, including its version. These commands depend on that release having been published:
 
 ```sh
-npm install --global --ignore-scripts https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.6.0/client-update.tgz
+npm install --global --ignore-scripts https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.6.1/client-update.tgz
 ibl-projects-mcp --setup
 ```
 
 ```sh
-npx --yes --ignore-scripts --package=https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.6.0/client-update.tgz ibl-projects-mcp --setup
+npx --yes --ignore-scripts --package=https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.6.1/client-update.tgz ibl-projects-mcp --setup
 ```
 
 For a bootstrap verified against the existing source signing key, follow [the signature and artifact verification steps](docs/install.md#verify-the-bootstrap-artifact) before installing the downloaded archive. A source checkout remains supported:
 
 ```sh
-git clone --branch v0.6.0 --depth 1 https://github.com/sergiuliano/ibl-projects-mcp.git &&
+git clone --branch v0.6.1 --depth 1 https://github.com/sergiuliano/ibl-projects-mcp.git &&
 cd ibl-projects-mcp &&
 git config gpg.ssh.allowedSignersFile /ABSOLUTE/PATH/allowed_signers &&
-git verify-tag v0.6.0 &&
+git verify-tag v0.6.1 &&
 npm ci --ignore-scripts &&
 npm run build &&
 node dist/cli.js --setup
@@ -40,16 +40,42 @@ Existing installations older than 0.5.1 need one manual upgrade to this bootstra
 For an existing source checkout with release signing trust already configured:
 
 ```sh
-git fetch origin tag v0.6.0 &&
-git verify-tag v0.6.0 &&
-git checkout --detach v0.6.0 &&
+git fetch origin tag v0.6.1 &&
+git verify-tag v0.6.1 &&
+git checkout --detach v0.6.1 &&
 npm ci --ignore-scripts &&
 npm run build &&
 node dist/cli.js --setup
 ```
 
 
-`--setup` shows the approval code, waits for browser approval, and verifies authentication and the shared tool contract. It never calls a project tool. You can instead add the client directly to your MCP host and use `connect_account` there. Stdio initialization does not wait for account approval.
+`--setup` verifies and reuses a valid existing login. Without one, it shows the approval code, waits for browser approval, and verifies authentication and the shared tool contract. Use `--setup --reconnect` to explicitly start a replacement browser approval, optionally adding `--read-only`. The old live and saved login remain in place until the replacement is verified and saved. It never calls a project tool. You can instead add the client directly to your MCP host and use `connect_account` there. Stdio initialization does not wait for account approval.
+
+The terminal `--setup --reconnect` flag requires a 0.6.1 or newer bootstrap. Upgrade an older installed bootstrap for this flag, or request reconnect through the host account tool. A runtime update alone does not change the bootstrap argument parser.
+
+For independent host approvals, give each host its own absolute `PM_MCP_STATE_DIR`. The default directory shares credentials by exact endpoint, so installing another host may reuse an existing approval. Existing configurations are not silently migrated.
+
+For Claude Code with a stable source installation:
+
+```sh
+claude mcp add --env PM_MCP_STATE_DIR=/ABSOLUTE/PATH/maddots-claude-code \
+  --transport stdio --scope user maddots \
+  -- /ABSOLUTE/PATH/node /ABSOLUTE/PATH/maddots-mcp/dist/cli.js
+```
+
+Replace the paths with your absolute paths. Keep at least one other option between the variadic `--env` option and the server name, as shown by `--transport` and `--scope`, and `--` before the executable. Use the same directory for terminal setup or reconnect:
+
+```sh
+PM_MCP_STATE_DIR=/ABSOLUTE/PATH/maddots-claude-code \
+  /ABSOLUTE/PATH/node /ABSOLUTE/PATH/maddots-mcp/dist/cli.js --setup
+
+PM_MCP_STATE_DIR=/ABSOLUTE/PATH/maddots-claude-code \
+  /ABSOLUTE/PATH/node /ABSOLUTE/PATH/maddots-mcp/dist/cli.js --setup --reconnect
+```
+
+Approve the displayed code yourself at https://maddots.app/integrations and choose **All accessible workspaces** for broad access. After setup or a configuration change, reconnect from Claude's `/mcp` menu or restart the session to reload the saved credential and tool catalog. A separate terminal process does not refresh an already running MCP connection. See [Claude setup details](docs/install.md#claude-code-and-separate-host-approvals).
+
+Reconnect and disconnect use host confirmation when form elicitation is supported. `confirm: true` never bypasses that confirmation. A cancelled confirmation is the host's returned outcome, not evidence that the user declined or that the desktop automatically declines. Preserve the existing connection and wait for an explicit new request; do not automatically retry or bypass confirmation.
 
 On supported POSIX systems, approved credentials are remembered in a private configuration directory outside the checkout and bound to the exact MCP endpoint. Systems without the required file ownership and no-follow checks keep the login for the current client session only. No OS Keychain or password manager is accessed. Advanced installations can still use `PM_MCP_TOKEN` or `PM_MCP_TOKEN_FILE` instead. Paired credentials expire after 30 days; call `connect_account` with `action: "reconnect"` to approve a replacement.
 
@@ -71,7 +97,7 @@ Version 0.4.2 requires confirmation for reconnect and disconnect, preserves exis
 
 The current client includes the optional `dueAt` UTC deadline in `create_task` and `update_task`, matching the hosted catalog. Version 0.4.1 predates those schema fields and cannot pass discovery against that catalog, including before a read. Tool discovery still validates every input and output schema; it never bypasses a mismatch.
 
-If a saved approval fails with `REMOTE_CONTRACT_MISMATCH`, check `--status`, then use `--update` and reconnect the MCP host if requested. For a pre-0.5.1 bootstrap, perform the one-time manual upgrade above. The local tool list alone does not verify remote compatibility. Keep the existing endpoint and credential directory: a valid saved approval is reused. Run `node dist/cli.js --setup` to check authentication and catalog compatibility, then ask the host to call `list_projects`. Pair again only if authorization has expired or been revoked.
+If a saved approval fails with `REMOTE_CONTRACT_MISMATCH`, check `--status`, then use `--update` and reconnect the MCP host if requested. For a pre-0.5.1 bootstrap, perform the one-time manual upgrade above. The local tool list alone does not verify remote compatibility. Keep the existing endpoint and credential directory: a valid saved approval is reused. Run `node dist/cli.js --setup` to check authentication and catalog compatibility, then ask the host to call `list_projects`. Pair again if authorization has expired or been revoked, or when you explicitly want to replace the account or approved scope.
 
 Version 0.6.0 adds explicitly approved multi-workspace pairing and strict dual-catalog verification. An upgrade alone never broadens a legacy grant. Request `connect_account` with `action: "reconnect"` only when the user authorizes reapproval, then choose all accessible workspaces in the browser. The current live and saved connection is preserved on cancellation, denial, network failure or catalog mismatch. A replacement becomes active only after authenticated catalog verification and successful atomic credential storage. Hosts must reconnect once when this release changes their initial catalog capability or instructions; signature and compatibility checks remain enforced.
 

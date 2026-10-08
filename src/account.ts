@@ -25,6 +25,7 @@ const safeError = (error: unknown): BridgeError => error instanceof BridgeError 
 type Remote = Pick<RemoteService, 'callTool' | 'close'> & { initialize(credential?: string): Promise<WorkspaceAccess | void> };
 type Store = Pick<CredentialStore, 'load' | 'save' | 'remove'>;
 type Flow = Pick<PairingFlow, 'start' | 'wait' | 'snapshot' | 'cancel'>;
+type Confirmation = boolean | 'cancelled' | 'not_confirmed' | undefined;
 
 export class AccountService {
   private remote: Remote;
@@ -36,7 +37,7 @@ export class AccountService {
   private readonly retired = new Set<Remote>();
   private readonly store: Store;
   private readonly makeFlow: () => Flow;
-  private readonly confirmReconnect?: (signal?: AbortSignal, action?: 'reconnect' | 'disconnect') => Promise<boolean | undefined>;
+  private readonly confirmReconnect?: (signal?: AbortSignal, action?: 'reconnect' | 'disconnect') => Promise<Confirmation>;
   private readonly presentPairing?: (pending: PendingPairing, signal?: AbortSignal) => Promise<boolean>;
   private hadCredential = false;
   private privatePairingCode = false;
@@ -56,7 +57,7 @@ export class AccountService {
   private closed = false;
   private reconnecting = false;
 
-  constructor(private readonly env: NodeJS.ProcessEnv = process.env, dependencies: { remote?: Remote; makeRemote?: () => Remote; onCatalogChanged?: () => void; store?: Store; makeFlow?: () => Flow; confirmReconnect?: (signal?: AbortSignal, action?: 'reconnect' | 'disconnect') => Promise<boolean | undefined>; presentPairing?: (pending: PendingPairing, signal?: AbortSignal) => Promise<boolean> } = {}) {
+  constructor(private readonly env: NodeJS.ProcessEnv = process.env, dependencies: { remote?: Remote; makeRemote?: () => Remote; onCatalogChanged?: () => void; store?: Store; makeFlow?: () => Flow; confirmReconnect?: (signal?: AbortSignal, action?: 'reconnect' | 'disconnect') => Promise<Confirmation>; presentPairing?: (pending: PendingPairing, signal?: AbortSignal) => Promise<boolean> } = {}) {
     this.confirmReconnect = dependencies.confirmReconnect;
     this.presentPairing = dependencies.presentPairing;
     const url = endpoint(env);
@@ -209,7 +210,13 @@ export class AccountService {
   private async confirmation(action: 'reconnect' | 'disconnect', args: Record<string, unknown>, signal?: AbortSignal): Promise<CallToolResult | undefined> {
     if (!this.hadCredential && !this.secret) return;
     const confirmed = await this.confirmReconnect?.(signal, action);
-    if (confirmed === false) return result({ status: action + '_cancelled', instructions: 'The user declined changing the account connection. The current authorization is unchanged.' });
+    if (confirmed === false || confirmed === 'cancelled' || confirmed === 'not_confirmed') {
+      const confirmation = confirmed === false ? 'declined' : confirmed;
+      const explanation = confirmation === 'declined' ? 'The host returned a declined confirmation.'
+        : confirmation === 'cancelled' ? 'The host returned a cancelled confirmation. This does not establish why the dialog was cancelled.'
+        : 'The host did not return an affirmative confirmation.';
+      return result({ status: action + '_cancelled', confirmation, instructions: explanation + ' The current authorization is unchanged. Do not automatically retry or change credential folders. Retry only on a new explicit user request.' });
+    }
     if (confirmed === undefined && args.confirm !== true) return result({ status: 'confirmation_required', instructions: `Ask the user to explicitly confirm ${action === 'disconnect' ? 'disconnecting' : 'replacing'} the current connection. Only after their confirmation, call connect_account again with action ${action} and confirm: true. Show approval codes only to the user and never pass them to other tools.` });
   }
 
@@ -300,15 +307,18 @@ export class AccountService {
     return { safe: true };
   }
 
-  async setup(display: (pending: PendingPairing) => void, readOnly = false): Promise<Persistence> {
+  async setup(display: (pending: PendingPairing) => void, readOnly = false, reconnect = false): Promise<Persistence> {
     await this.load();
-    if (this.secret) { await this.ensureConnected(); return this.persistence; }
+    if (this.secret && !reconnect) { await this.ensureConnected(); return this.persistence; }
+    // The explicit CLI flag authorizes a new browser approval, while retaining
+    // the previous credential until the replacement is verified and saved.
     const response = await this.begin(readOnly ? ['kanban:read'] : ['kanban:read', 'kanban:write']);
     if (response.isError) throw this.terminal ?? new BridgeError('PAIRING_CANCELLED', 'Account connection was cancelled.');
     const pending = this.flow?.snapshot();
     if (pending) display(pending);
     await this.pairingTask;
-    if (!this.ready) throw this.terminal ?? new BridgeError('PAIRING_CANCELLED', 'Account connection was cancelled.');
+    if (this.terminal) throw this.terminal;
+    if (!this.ready) throw new BridgeError('PAIRING_CANCELLED', 'Account connection was cancelled.');
     return this.persistence;
   }
 

@@ -4,22 +4,22 @@ Requirements: Node.js 22.22.2 or later in the Node 22 series, or Node.js 24.15.0
 
 ## Install the version-pinned bootstrap
 
-The client is distributed through [sergiuliano/ibl-projects-mcp releases](https://github.com/sergiuliano/ibl-projects-mcp/releases), with npm publication disabled. Use these commands only after `v0.6.0` and its `client-update.tgz` asset exist. Do not run `npm install ibl-projects-mcp` or `npx ibl-projects-mcp`, which would look for an unpublished registry package.
+The client is distributed through [sergiuliano/ibl-projects-mcp releases](https://github.com/sergiuliano/ibl-projects-mcp/releases), with npm publication disabled. Use these commands only after `v0.6.1` and its `client-update.tgz` asset exist. Do not run `npm install ibl-projects-mcp` or `npx ibl-projects-mcp`, which would look for an unpublished registry package.
 
 ```sh
-npm install --global --ignore-scripts https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.6.0/client-update.tgz
+npm install --global --ignore-scripts https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.6.1/client-update.tgz
 ibl-projects-mcp --setup
 ```
 
 A version-pinned npx invocation is also supported:
 
 ```sh
-npx --yes --ignore-scripts --package=https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.6.0/client-update.tgz ibl-projects-mcp --setup
+npx --yes --ignore-scripts --package=https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.6.1/client-update.tgz ibl-projects-mcp --setup
 ```
 
 These direct URL commands trust the GitHub release distribution channel for the first bootstrap. To verify that archive against the trusted source tag and the release workflow before executing it, use [artifact verification](#verify-the-bootstrap-artifact), then install the verified local archive. Later automatic runtime downloads always require the fixed workflow's Sigstore attestation.
 
-Setup shows a browser link and an eight-character code. Open the link, sign in to the intended MadDots account, enter the code and approve access within five minutes. Then configure your MCP host without `--setup`. For a global installation, use `ibl-projects-mcp` as the command. For npx:
+When no valid credential exists, setup shows a browser link and an eight-character code. Open https://maddots.app/integrations, sign in to the intended MadDots account, enter the code and approve access within five minutes. Choose **All accessible workspaces** if you want access across your workspaces. A valid existing credential is verified and reused by `--setup` without another browser approval. Then configure your MCP host without `--setup`. For a global installation, use `ibl-projects-mcp` as the command. For npx:
 
 ```json
 {
@@ -29,7 +29,7 @@ Setup shows a browser link and an eight-character code. Open the link, sign in t
       "args": [
         "--yes",
         "--ignore-scripts",
-        "--package=https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.6.0/client-update.tgz",
+        "--package=https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.6.1/client-update.tgz",
         "ibl-projects-mcp"
       ]
     }
@@ -37,17 +37,17 @@ Setup shows a browser link and an eight-character code. Open the link, sign in t
 }
 ```
 
-The bootstrap version stays pinned in this configuration while verified compatible runtime updates are selected from a separate cache. For a new read-only approval, append `--read-only` to the setup command. Existing authorization keeps its original scopes.
+The bootstrap version stays pinned in this configuration while verified compatible runtime updates are selected from a separate cache. For a new read-only approval, append `--read-only` to the setup command. Existing authorization keeps its original scopes. To explicitly replace an existing approval, use `--setup --reconnect`, optionally with `--read-only`.
 
 ## Build the signed source release
 
 First configure [release signing trust](#trust-the-release-signing-key), then verify the exact tag before installing dependencies:
 
 ```sh
-git clone --branch v0.6.0 --depth 1 https://github.com/sergiuliano/ibl-projects-mcp.git &&
+git clone --branch v0.6.1 --depth 1 https://github.com/sergiuliano/ibl-projects-mcp.git &&
 cd ibl-projects-mcp &&
 git config gpg.ssh.allowedSignersFile /ABSOLUTE/PATH/allowed_signers &&
-git verify-tag v0.6.0 &&
+git verify-tag v0.6.1 &&
 npm ci --ignore-scripts &&
 npm run build &&
 node dist/cli.js --setup
@@ -69,7 +69,7 @@ Configure this checkout to use the file:
 
 ```sh
 git config gpg.ssh.allowedSignersFile /ABSOLUTE/PATH/allowed_signers
-git verify-tag v0.6.0
+git verify-tag v0.6.1
 ```
 
 Continue only when Git reports a good signature for `sergiuliano` with the verified fingerprint. Do not trust every key in the downloaded list automatically. A changed signing key requires a new confirmation with the owner.
@@ -79,17 +79,17 @@ Continue only when Git reports a good signature for `sergiuliano` with the verif
 After cloning the pinned source tag and configuring the allowed-signers file above, verify the tag, download all three assets into a new empty directory, and verify the artifact against the exact signed source commit. The release workflow publishes the same archive under both its commit release and the signed version's bootstrap release.
 
 ```sh
-git verify-tag v0.6.0 &&
+git verify-tag v0.6.1 &&
 mkdir bootstrap-download &&
-gh release download v0.6.0 --repo sergiuliano/ibl-projects-mcp --dir bootstrap-download \
+gh release download v0.6.1 --repo sergiuliano/ibl-projects-mcp --dir bootstrap-download \
   --pattern client-update.tgz --pattern client-update.sigstore.json --pattern client-update.tgz.sha256 &&
 gh attestation verify bootstrap-download/client-update.tgz \
   --bundle bootstrap-download/client-update.sigstore.json \
   --repo sergiuliano/ibl-projects-mcp \
   --cert-identity 'https://github.com/sergiuliano/ibl-projects-mcp/.github/workflows/client-release.yml@refs/heads/main' \
   --cert-oidc-issuer https://token.actions.githubusercontent.com \
-  --source-ref refs/heads/main --source-digest "$(git rev-parse 'v0.6.0^{commit}')" \
-  --signer-digest "$(git rev-parse 'v0.6.0^{commit}')" --deny-self-hosted-runners &&
+  --source-ref refs/heads/main --source-digest "$(git rev-parse 'v0.6.1^{commit}')" \
+  --signer-digest "$(git rev-parse 'v0.6.1^{commit}')" --deny-self-hosted-runners &&
 npm install --global --ignore-scripts ./bootstrap-download/client-update.tgz
 ```
 
@@ -110,6 +110,42 @@ For a source installation, setup verifies authentication and matching hosted too
 
 Replace the path with your stable installation path. You may skip setup and ask the host to call `connect_account`. Stdio starts without waiting for account approval. A project operation attempted before approval returns an authorization instruction and is never queued or replayed.
 
+The terminal `--setup --reconnect` flag requires a 0.6.1 or newer bootstrap. An older pinned bootstrap needs a manual upgrade for this flag even when its runtime is current; otherwise request reconnect through the host account tool.
+
+## Claude Code and separate host approvals
+
+The default credential directory is shared by endpoint, so two MCP hosts using the same directory and URL can reuse the same saved approval. For independent approvals, configure a separate absolute `PM_MCP_STATE_DIR` for each host. Existing configurations keep their current directory; installing or updating the client does not migrate their credentials.
+
+For Claude Code with a stable source installation, register the server with its own credential directory:
+
+```sh
+claude mcp add --env PM_MCP_STATE_DIR=/ABSOLUTE/PATH/maddots-claude-code \
+  --transport stdio --scope user maddots \
+  -- /ABSOLUTE/PATH/node /ABSOLUTE/PATH/maddots-mcp/dist/cli.js
+```
+
+Replace the paths with absolute paths for your credential directory, Node executable and client installation. For example, a private directory under your user's `.config` can hold Claude's credentials. Keep at least one other option between `--env` and the server name, as shown by `--transport` and `--scope`, because `--env` accepts multiple values. Use `--` before the executable. For an existing `maddots` registration, update its command and environment in your Claude MCP configuration.
+
+Use exactly the same credential directory for terminal setup:
+
+```sh
+PM_MCP_STATE_DIR=/ABSOLUTE/PATH/maddots-claude-code \
+  /ABSOLUTE/PATH/node /ABSOLUTE/PATH/maddots-mcp/dist/cli.js --setup
+```
+
+To explicitly request a replacement browser approval, including broader workspace access:
+
+```sh
+PM_MCP_STATE_DIR=/ABSOLUTE/PATH/maddots-claude-code \
+  /ABSOLUTE/PATH/node /ABSOLUTE/PATH/maddots-mcp/dist/cli.js --setup --reconnect
+```
+
+Append `--read-only` for a read-only replacement. `--setup` alone reuses a valid login. `--setup --reconnect` starts a new browser approval and preserves the old live and saved login until the replacement has been verified and saved. Approve the displayed code yourself at https://maddots.app/integrations and choose **All accessible workspaces** when that is the intended scope.
+
+After terminal setup or a host configuration change, reconnect the server from Claude's `/mcp` menu or restart the Claude session. A running MCP process retains its current connection; a separate setup process cannot refresh it. Reconnecting reloads the saved credential and tool catalog. An all-workspaces connection has 27 local tools, including `connect_account` and `list_workspaces`.
+
+If a host returns a cancelled confirmation, treat it as the host's returned outcome. It does not establish that the user declined or that the desktop automatically declines. Do not automatically retry or bypass host confirmation. `confirm: true` is only the explicit confirmation path for hosts without supported form elicitation; it never bypasses a supported host's confirmation.
+
 ## Account access and connection controls
 
 `connect_account` accepts these optional arguments:
@@ -121,7 +157,7 @@ Replace the path with your stable installation path. You may skip setup and ask 
 | `action` | `cancel` | Stop only a pending local approval; keep existing credentials. The code expires automatically; if it was already approved, revoke the connection in MadDots. |
 | `action` | `reconnect` | Keep the current login while requesting a new approval, for example to switch accounts, replace expired authorization, or explicitly approve all-workspaces access. |
 | `action` | `disconnect` | Delete the saved credential for the current endpoint and stop using its authorization in this session. Only call this on an explicit user request. |
-| `confirm` | `true` | On a host without MCP form elicitation, confirm reconnect or disconnect only after the user explicitly approves changing the current connection. |
+| `confirm` | `true` | On a host without MCP form elicitation, confirm reconnect or disconnect only after the user explicitly approves changing the current connection. It never bypasses confirmation on a host that supports form elicitation. |
 | `access` | `read_write` (default), `read_only` | Choose account access for a new approval. Existing authorization is unchanged unless you reconnect. |
 
 Connect, reconnect and disconnect require an explicit user request in the current conversation. Show the approval code only to the user, and never pass it to another tool. Reconnecting or disconnecting a client that has held authorization asks for host confirmation through MCP form elicitation when supported. Otherwise, the client preserves the current login and returns instructions to obtain user confirmation before calling again with `confirm: true`. A later connect after disconnect still requires this confirmation in the same process. Cancellation never clears a saved or environment credential. Hosts supporting form elicitation receive the approval code only in that user-facing prompt, never in connect or status tool results.
@@ -132,17 +168,17 @@ For an all-workspaces grant, omitting `workspaceId` uses the workspace selected 
 
 Approve codes only when you initiated the connection, and confirm the displayed account and requested access. Approval issues a revocable 30-day credential. Its expiry is shown by `connect_account` with `action: "status"`. When it expires or is revoked, call `connect_account` with `action: "reconnect"` and approve a new code. There is no silent token renewal. An expired saved login also causes the next `--setup` to start a new approval. Revoke access in MadDots when it is no longer needed.
 
-Expired, declined, already claimed, or interrupted approvals stop polling and require an explicit new `connect_account` request. Press Ctrl+C to cancel foreground setup.
+Expired, declined, already claimed, or interrupted approvals stop polling and require an explicit new connection request. Press Ctrl+C to cancel foreground setup. A cancelled host confirmation preserves the existing connection and must not trigger an automatic retry.
 
 ## Remembering your login
 
 On supported POSIX systems, the client saves its approved credential automatically under `~/.config/ibl-projects-mcp/`. The filename is a SHA-256 hash of the exact configured MCP URL. The directory must be owned by your user with permissions `0700` and have no symlink path components. Credential files must be regular files owned by your user with permissions `0600`; symlinks are rejected. Credentials are bound to the exact endpoint and are not reused at another URL.
 
-Set `PM_MCP_STATE_DIR` to an absolute private directory outside this checkout if you need a different location. Protect that directory and its backups. Tokens and polling secrets are never printed in setup output, tool results, or error messages. The client does not access OS Keychain or a password manager.
+Set `PM_MCP_STATE_DIR` to an absolute private directory outside this checkout if you need a different location. Separate per-host directories are recommended when each host should receive its own approval. Hosts using the default directory share the saved credential for the same exact endpoint; no automatic migration changes existing configurations. Protect that directory and its backups. Tokens and polling secrets are never printed in setup output, tool results, or error messages. The client does not access OS Keychain or a password manager.
 
 If the platform cannot enforce the required POSIX file checks, or a credential cannot be saved safely, an approved connection remains usable in memory for the current session. The connection status reports that it was not remembered. In that case, use pairing within the running MCP host and approve a new code after restarting it; a separate `--setup` process cannot pass its in-memory login to another process. Do not weaken file permissions to enable persistence.
 
-An explicit reconnect preserves the old live and saved login while approval is pending. The client verifies the new credential against one exact supported remote catalog before atomically replacing the saved credential and switching the live connection. Cancellation, denial, expiry, network errors, incompatible catalogs and replacement storage failure preserve the previous connection. In-flight operations finish on their original connection and are never replayed. Reconnect does not revoke the previous server-side credential. Manage revocation in MadDots. An explicit `disconnect` deletes only the current endpoint’s saved credential, cancels pending approval, and clears authorization for this client session. It does not revoke server access or change environment token configuration; remove manual token configuration separately before restarting. Authorization failures clear the in-memory credential without deleting the saved file.
+An explicit reconnect, through `connect_account` or `--setup --reconnect`, preserves the old live and saved login while approval is pending. The client verifies the new credential against one exact supported remote catalog before atomically replacing the saved credential and switching the live connection. Cancellation, denial, expiry, network errors, incompatible catalogs and replacement storage failure preserve the previous connection. In-flight operations finish on their original connection and are never replayed. Reconnect does not revoke the previous server-side credential. Manage revocation in MadDots. An explicit `disconnect` deletes only the current endpoint’s saved credential, cancels pending approval, and clears authorization for this client session. It does not revoke server access or change environment token configuration; remove manual token configuration separately before restarting. Authorization failures clear the in-memory credential without deleting the saved file.
 
 ## Advanced: existing bearer tokens
 
@@ -163,9 +199,9 @@ An explicit local endpoint such as `http://127.0.0.1:PORT/mcp` also requires `PM
 Clients released before 0.5.1 cannot install the new supervisor automatically. Stop the host's MCP connection, update the bootstrap once, then restart the connection. For a source checkout, preserve the existing directory and verify the exact signed tag before changing it:
 
 ```sh
-git fetch origin tag v0.6.0 &&
-git verify-tag v0.6.0 &&
-git checkout --detach v0.6.0 &&
+git fetch origin tag v0.6.1 &&
+git verify-tag v0.6.1 &&
+git checkout --detach v0.6.1 &&
 npm ci --ignore-scripts &&
 npm run build &&
 node dist/cli.js --setup
@@ -215,7 +251,7 @@ Version 0.4.2 adds account-change confirmation and untrusted-content notices to 
 
 The current client includes the optional `dueAt` UTC deadline in `create_task` and `update_task`, matching the hosted catalog. Version 0.4.1 predates those schema fields and cannot pass discovery against that catalog, including before a read. Tool discovery still validates every input and output schema; it never bypasses a mismatch.
 
-If a saved approval fails with `REMOTE_CONTRACT_MISMATCH`, check `--status`, apply a verified update with `--update`, and reconnect the host if requested. A pre-0.5.1 bootstrap needs the one-time migration above. The local tool list alone does not verify remote compatibility. Keep the existing endpoint and credential directory: a valid saved approval is reused. Run `node dist/cli.js --setup` to check authentication and catalog compatibility, then ask the host to call `list_projects`. Pair again only if authorization has expired or been revoked.
+If a saved approval fails with `REMOTE_CONTRACT_MISMATCH`, check `--status`, apply a verified update with `--update`, and reconnect the host if requested. A pre-0.5.1 bootstrap needs the one-time migration above. The local tool list alone does not verify remote compatibility. Keep the existing endpoint and credential directory: a valid saved approval is reused. Run `node dist/cli.js --setup` to check authentication and catalog compatibility, then ask the host to call `list_projects`. Pair again if authorization has expired or been revoked, or when you explicitly want to replace the account or approved scope.
 
 ### Multi-workspace catalog verification (0.6.0)
 
