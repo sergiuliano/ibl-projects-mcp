@@ -30,9 +30,9 @@ const cleanEnv = () => ({ ...Object.fromEntries(Object.entries(process.env).filt
 
 async function fixture(t, { catalog = TOOL_DEFINITIONS, disconnect = false, redirectTo, toolResult, getRedirectTo } = {}) {
   const calls = [];
-  let authenticated = 0;
+  let authenticated = 0, revoked = false;
   const http = createServer(async (req, res) => {
-    if (req.headers.authorization !== `Bearer ${syntheticToken}`) {
+    if (revoked || req.headers.authorization !== `Bearer ${syntheticToken}`) {
       res.writeHead(401, { 'Content-Type': 'text/plain' });
       res.end(`Untrusted error page with ${req.headers.authorization || 'no token'}`);
       return;
@@ -50,7 +50,7 @@ async function fixture(t, { catalog = TOOL_DEFINITIONS, disconnect = false, redi
       if (disconnect) { res.destroy(); return; }
     }
     const server = new Server({ name: 'fixture', version: MCP_VERSION }, { capabilities: { tools: {} } });
-    server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: catalog }));
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: typeof catalog==='function'?catalog():catalog }));
     server.setRequestHandler(CallToolRequestSchema, async request => toolResult ?? ({ content: [{ type: 'text', text: JSON.stringify({ name: request.params.name, args: request.params.arguments }) }], structuredContent: { fixture: true } }));
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     try {
@@ -64,7 +64,7 @@ async function fixture(t, { catalog = TOOL_DEFINITIONS, disconnect = false, redi
     ...cleanEnv(), PM_MCP_URL: `http://127.0.0.1:${http.address().port}/mcp`,
     PM_MCP_ALLOW_INSECURE_LOOPBACK: '1', PM_MCP_TOKEN: syntheticToken,
   };
-  return { env, calls, authenticated: () => authenticated };
+  return { env, calls, authenticated: () => authenticated, revoke:()=>{revoked=true;} };
 }
 
 test('endpoint requires HTTPS and explicit local HTTP opt-in', () => {
@@ -394,4 +394,40 @@ test('branded host variables initialize and read through the real stdio bridge',
   assert.equal(client.getServerVersion().name, 'maddots-mcp');
   await client.callTool({ name: 'list_projects', arguments: {} });
   assert.deepEqual(hosted.calls, [{ name: 'list_projects', arguments: {} }]);
+});
+
+
+test('0.6.3 discovers legacy server tools and adopts live capabilities without reconnecting authorization',async t=>{
+ const {LIVE_TOOL_DEFINITIONS,LIVE_ALL_WORKSPACE_TOOL_DEFINITIONS}=await import('../dist/contract.js');
+ let catalog=TOOL_DEFINITIONS;
+ const f=await fixture(t,{catalog:()=>catalog});
+ const remote=new RemoteService(f.env);t.after(()=>remote.close());
+ assert.equal(await remote.initialize(),'workspace');assert.equal(remote.liveAccess(),false);
+ assert.equal((await remote.callTool('list_projects',{})).isError,undefined);
+ assert.equal((await remote.callTool('resolve_link',{url:'https://maddots.app/projects/00000000-0000-4000-8000-000000000001'})).isError,true);
+ catalog=LIVE_TOOL_DEFINITIONS;
+ assert.equal(await remote.refreshCatalog(),'workspace');assert.equal(remote.liveAccess(),true);
+ assert.equal((await remote.callTool('list_workspaces',{})).isError,undefined);
+ assert.equal((await remote.callTool('resolve_link',{url:'https://maddots.app/projects/00000000-0000-4000-8000-000000000001'})).isError,undefined);
+ catalog=LIVE_ALL_WORKSPACE_TOOL_DEFINITIONS;
+ assert.equal(await remote.refreshCatalog(),'all');assert.equal(verifyCatalog(catalog),'all');
+ assert.equal(verifyCatalog(LIVE_TOOL_DEFINITIONS),'workspace');
+ const corrupt=globalThis.structuredClone(catalog);corrupt.find(tool=>tool.name==='resolve_link').inputSchema.additionalProperties=true;
+ assert.throws(()=>verifyCatalog(corrupt),/schemas differ/);
+ catalog=corrupt;await assert.rejects(remote.refreshCatalog(),/schemas differ/);
+ const calls=f.calls.length;assert.equal((await remote.callTool('create_project',{name:'Must not submit'})).isError,true);assert.equal(f.calls.length,calls);
+ catalog=LIVE_ALL_WORKSPACE_TOOL_DEFINITIONS;await remote.refreshCatalog();assert.equal((await remote.callTool('list_projects',{})).isError,undefined);
+});
+
+
+test('HTTP401 during catalog refresh clears only live authorization and reports AUTH_REQUIRED before a tool is submitted',async t=>{
+ const f=await fixture(t);
+ const remote=new RemoteService(f.env),account=new AccountService(f.env,{remote});t.after(()=>account.close());
+ assert.equal((await account.callTool('list_projects',{})).isError,undefined);
+ assert.equal((await account.callTool('connect_account',{action:'status'})).structuredContent.status,'connected');
+ const calls=f.calls.length;f.revoke();
+ assert.equal(await account.workspaceAccess(),false);assert.equal(await account.liveAccess(),false);
+ const status=await account.callTool('connect_account',{action:'status'});assert.equal(status.isError,true);assert.equal(status.structuredContent.error.code,'AUTH_REQUIRED');
+ const rejected=await account.callTool('list_projects',{});assert.equal(rejected.isError,true);assert.equal(rejected.structuredContent.error.code,'AUTH_REQUIRED');
+ assert.equal(f.calls.length,calls);assert(!account.updateSafety().safe);
 });

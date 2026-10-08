@@ -1,24 +1,24 @@
 # Install the MadDots MCP client
 
-Version 0.6.2 uses the preferred `maddots-mcp` executable and source package name. The `ibl-projects-mcp` executable remains an alias for existing host commands. Prefer `MADDOTS_MCP_*` configuration variables; matching `PM_MCP_*` names remain supported, and the preferred spelling wins when both are set. Saved approvals remain in `~/.config/ibl-projects-mcp/` by default so existing connections survive the rename. Keep the same endpoint and credential directory. The signed runtime archive deliberately retains the legacy `ibl-projects-mcp` package identity so older verified updaters can accept this bridge release. The public repository, signing key and exact Sigstore workflow identity remain `sergiuliano/ibl-projects-mcp`; this compatibility channel will be retired only after a separately verified migration. No new npm registry package is published.
+Version 0.6.3 retains the preferred `maddots-mcp` executable and source package name. The `ibl-projects-mcp` executable remains an alias for existing host commands. Prefer `MADDOTS_MCP_*` configuration variables; matching `PM_MCP_*` names remain supported, and the preferred spelling wins when both are set. Saved approvals remain in `~/.config/ibl-projects-mcp/` by default so existing connections survive the rename. Keep the same endpoint and credential directory. The signed runtime archive deliberately retains the legacy `ibl-projects-mcp` package identity so older verified updaters can accept this bridge release. The public repository, signing key and exact Sigstore workflow identity remain `sergiuliano/ibl-projects-mcp`; this compatibility channel will be retired only after a separately verified migration. No new npm registry package is published.
 
-If the installed bootstrap is older than 0.6.2, keep its `PM_MCP_*` settings until you manually install the 0.6.2 bootstrap and restart the host. A cached runtime update does not replace that bootstrap: its startup updater, `--status` and `--rollback` still read the legacy names. To introduce a branded setting during this transition, set both matching names to the same value, especially `PM_MCP_AUTO_UPDATE` / `MADDOTS_MCP_AUTO_UPDATE` and `PM_MCP_UPDATE_DIR` / `MADDOTS_MCP_UPDATE_DIR`. Remove the legacy spelling only after the installed executable reports 0.6.2 or newer with `--version`.
+If the installed bootstrap is older than 0.6.2, keep its `PM_MCP_*` settings until you manually install the current 0.6.3 bootstrap and restart the host. A cached runtime update does not replace that bootstrap: its startup updater, `--status` and `--rollback` still read the legacy names. To introduce a branded setting during this transition, set both matching names to the same value, especially `PM_MCP_AUTO_UPDATE` / `MADDOTS_MCP_AUTO_UPDATE` and `PM_MCP_UPDATE_DIR` / `MADDOTS_MCP_UPDATE_DIR`. Remove the legacy spelling only after the installed executable reports 0.6.2 or newer with `--version`.
 
 Requirements: Node.js 22.22.2 or later in the Node 22 series, or Node.js 24.15.0 or later in the Node 24 series, npm and a MadDots account. Git is required for source signature verification and source installs. The optional artifact verification command uses GitHub CLI. The server operator deploys MCP and account pairing separately.
 
 ## Install the version-pinned bootstrap
 
-The client is distributed through [sergiuliano/ibl-projects-mcp releases](https://github.com/sergiuliano/ibl-projects-mcp/releases), with npm publication disabled. Use these commands only after `v0.6.2` and its `client-update.tgz` asset exist. Do not run `npm install maddots-mcp` or `npx maddots-mcp`, which would look for an unpublished registry package.
+The client is distributed through [sergiuliano/ibl-projects-mcp releases](https://github.com/sergiuliano/ibl-projects-mcp/releases), with npm publication disabled. Use these commands only after `v0.6.3` and its `client-update.tgz` asset exist. Do not run `npm install maddots-mcp` or `npx maddots-mcp`, which would look for an unpublished registry package.
 
 ```sh
-npm install --global --ignore-scripts https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.6.2/client-update.tgz
+npm install --global --ignore-scripts https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.6.3/client-update.tgz
 maddots-mcp --setup
 ```
 
 A version-pinned npx invocation is also supported:
 
 ```sh
-npx --yes --ignore-scripts --package=https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.6.2/client-update.tgz maddots-mcp --setup
+npx --yes --ignore-scripts --package=https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.6.3/client-update.tgz maddots-mcp --setup
 ```
 
 These direct URL commands trust the GitHub release distribution channel for the first bootstrap. To verify that archive against the trusted source tag and the release workflow before executing it, use [artifact verification](#verify-the-bootstrap-artifact), then install the verified local archive. Later automatic runtime downloads always require the fixed workflow's Sigstore attestation.
@@ -33,7 +33,7 @@ When no valid credential exists, setup shows a browser link and an eight-charact
       "args": [
         "--yes",
         "--ignore-scripts",
-        "--package=https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.6.2/client-update.tgz",
+        "--package=https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.6.3/client-update.tgz",
         "maddots-mcp"
       ]
     }
@@ -48,10 +48,10 @@ The bootstrap version stays pinned in this configuration while verified compatib
 First configure [release signing trust](#trust-the-release-signing-key), then verify the exact tag before installing dependencies:
 
 ```sh
-git clone --branch v0.6.2 --depth 1 https://github.com/sergiuliano/ibl-projects-mcp.git &&
+git clone --branch v0.6.3 --depth 1 https://github.com/sergiuliano/ibl-projects-mcp.git &&
 cd ibl-projects-mcp &&
 git config gpg.ssh.allowedSignersFile /ABSOLUTE/PATH/allowed_signers &&
-git verify-tag v0.6.2 &&
+git verify-tag v0.6.3 &&
 npm ci --ignore-scripts &&
 npm run build &&
 node dist/cli.js --setup
@@ -73,7 +73,7 @@ Configure this checkout to use the file:
 
 ```sh
 git config gpg.ssh.allowedSignersFile /ABSOLUTE/PATH/allowed_signers
-git verify-tag v0.6.2
+git verify-tag v0.6.3
 ```
 
 Continue only when Git reports a good signature for `sergiuliano` with the verified fingerprint. Do not trust every key in the downloaded list automatically. A changed signing key requires a new confirmation with the owner.
@@ -83,17 +83,17 @@ Continue only when Git reports a good signature for `sergiuliano` with the verif
 After cloning the pinned source tag and configuring the allowed-signers file above, verify the tag, download all three assets into a new empty directory, and verify the artifact against the exact signed source commit. The release workflow publishes the same archive under both its commit release and the signed version's bootstrap release.
 
 ```sh
-git verify-tag v0.6.2 &&
+git verify-tag v0.6.3 &&
 mkdir bootstrap-download &&
-gh release download v0.6.2 --repo sergiuliano/ibl-projects-mcp --dir bootstrap-download \
+gh release download v0.6.3 --repo sergiuliano/ibl-projects-mcp --dir bootstrap-download \
   --pattern client-update.tgz --pattern client-update.sigstore.json --pattern client-update.tgz.sha256 &&
 gh attestation verify bootstrap-download/client-update.tgz \
   --bundle bootstrap-download/client-update.sigstore.json \
   --repo sergiuliano/ibl-projects-mcp \
   --cert-identity 'https://github.com/sergiuliano/ibl-projects-mcp/.github/workflows/client-release.yml@refs/heads/main' \
   --cert-oidc-issuer https://token.actions.githubusercontent.com \
-  --source-ref refs/heads/main --source-digest "$(git rev-parse 'v0.6.2^{commit}')" \
-  --signer-digest "$(git rev-parse 'v0.6.2^{commit}')" --deny-self-hosted-runners &&
+  --source-ref refs/heads/main --source-digest "$(git rev-parse 'v0.6.3^{commit}')" \
+  --signer-digest "$(git rev-parse 'v0.6.3^{commit}')" --deny-self-hosted-runners &&
 npm install --global --ignore-scripts ./bootstrap-download/client-update.tgz
 ```
 
@@ -146,7 +146,7 @@ MADDOTS_MCP_STATE_DIR=/ABSOLUTE/PATH/maddots-claude-code \
 
 Append `--read-only` for a read-only replacement. `--setup` alone reuses a valid login. `--setup --reconnect` starts a new browser approval and preserves the old live and saved login until the replacement has been verified and saved. Approve the displayed code yourself at https://maddots.app/integrations and choose **All accessible workspaces** when that is the intended scope.
 
-After terminal setup or a host configuration change, reconnect the server from Claude's `/mcp` menu or restart the Claude session. A running MCP process retains its current connection; a separate setup process cannot refresh it. Reconnecting reloads the saved credential and tool catalog. An all-workspaces connection has 27 local tools, including `connect_account` and `list_workspaces`.
+After terminal setup or a host configuration change, reconnect the server from Claude's `/mcp` menu or restart the Claude session. A running MCP process retains its current connection; a separate setup process cannot refresh it. Reconnecting reloads the saved credential and tool catalog. The current service has 28 local tools, including `connect_account` and `list_workspaces`.
 
 If a host returns a cancelled confirmation, treat it as the host's returned outcome. It does not establish that the user declined or that the desktop automatically declines. Do not automatically retry or bypass host confirmation. `confirm: true` is only the explicit confirmation path for hosts without supported form elicitation; it never bypasses a supported host's confirmation.
 
@@ -203,9 +203,9 @@ An explicit local endpoint such as `http://127.0.0.1:PORT/mcp` also requires `MA
 Clients released before 0.5.1 cannot install the new supervisor automatically. Stop the host's MCP connection, update the bootstrap once, then restart the connection. For a source checkout, preserve the existing directory and verify the exact signed tag before changing it:
 
 ```sh
-git fetch origin tag v0.6.2 &&
-git verify-tag v0.6.2 &&
-git checkout --detach v0.6.2 &&
+git fetch origin tag v0.6.3 &&
+git verify-tag v0.6.3 &&
+git checkout --detach v0.6.3 &&
 npm ci --ignore-scripts &&
 npm run build &&
 node dist/cli.js --setup
@@ -259,10 +259,19 @@ If a saved approval fails with `REMOTE_CONTRACT_MISMATCH`, check `--status`, app
 
 ### Multi-workspace catalog verification (0.6.0)
 
-The client accepts exactly the restricted 25-tool catalog or the all-workspaces 26-tool catalog, with every input and output validation schema checked. The local `connect_account` tool is additional, giving 26 or 27 local tools. Partial, mixed and unknown catalogs are rejected before a business operation. Saved display metadata never determines authorization: every fresh process verifies the authenticated remote catalog. Catalog changes emit `notifications/tools/list_changed` through the supervisor so hosts refresh cached schemas. Reconnect hosts that cannot refresh their tool catalog.
+The client accepts the current scoped or broad 27-tool catalogs and the legacy restricted 25-tool or broad 26-tool catalogs, with every input and output validation schema checked. The local `connect_account` tool is additional, giving 28 tools on the current service or 26/27 on older services. Partial, mixed and unknown catalogs are rejected before a business operation. Saved display metadata never determines authorization: every fresh process verifies the authenticated remote catalog. Catalog changes emit `notifications/tools/list_changed` through the supervisor so hosts refresh cached schemas. Reconnect hosts that cannot refresh their tool catalog.
 
 Moving from an older runtime to 0.6.0 changes its initial capabilities and instructions, so the existing supervisor may require a host reconnect instead of swapping a worker live. The signed update checks, endpoint, existing credential store and explicit browser approval boundary remain unchanged. Never edit a stored credential to claim broader access.
 
-Choose **All accessible workspaces** in the browser to approve a broad connection. Legacy credentials cover every project you can access in the workspace selected when you approved the connection, including projects shared with you later in that workspace. They keep the restricted catalog until explicit reapproval.
+Choose **All accessible workspaces** in the browser to approve a broad connection. Legacy credentials cover every project you can access in the workspace selected when you approved the connection, including projects shared with you later in that workspace. They retain their restricted authorization until explicit reapproval.
 
 If the host sets `MADDOTS_MCP_TOKEN` or `MADDOTS_MCP_TOKEN_FILE`, that configuration takes precedence over saved pairing after a fresh launch. A successful reconnect uses the replacement in the current session and reports this override in its status. Remove or update the host environment through its configuration before restarting to retain the replacement account. Never copy secret values into chat.
+
+
+### Refresh access and use copied links
+
+On services supporting client 0.6.3, `list_workspaces` refreshes the current workspace names and roles without reconnecting your account. A restricted connection returns only its approved workspace. An all-workspace connection includes new active memberships automatically. Board access and removed memberships take effect on the next operation. Expanding a restricted approval requires explicit new consent.
+
+Use `resolve_link` with a copied MadDots board or task URL to obtain authorized context, IDs and versions directly. Follow-up operations use the returned IDs and current versions. Only this configured service's links are accepted. Links never grant access, and private Inbox and public-share links are unavailable. The bridge accepts older service catalogs during rollout and refreshes discovery when the service adds capabilities. Ask your host to refresh its tool list if it caches schemas; no account approval is needed for a catalog refresh.
+
+Native HTTP clients can read copied URLs through standard MCP resources: discover `resources/templates/list`, then call `resources/read` with the copied URL. Read `maddots://workspace-access` for current approved workspace access. Tools-only native clients opt into the current catalog with `x-maddots-mcp-contract: 1` or `params._meta: {"maddots/contract":"1"}` on each relevant request. Existing header-less clients retain their exact legacy tool catalogs.

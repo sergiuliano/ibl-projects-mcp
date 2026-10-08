@@ -1,6 +1,6 @@
 {
   "name": "maddots-mcp",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "private": true,
   "license": "MIT",
   "description": "Installable MCP stdio client for the authenticated MadDots Kanban service",

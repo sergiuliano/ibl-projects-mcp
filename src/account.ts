@@ -1,5 +1,5 @@
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
-import { READ_CONTENT_NOTICE } from './contract.js';
+import { READ_CONTENT_NOTICE, LIVE_TOOL_DEFINITIONS, TOOL_DEFINITIONS, ALL_WORKSPACE_TOOL_DEFINITIONS } from './contract.js';
 import { mcpConfig, accessToken, BridgeError, endpoint } from './config.js';
 import { CredentialStore, type Credential, type Persistence, type Scope } from './credentials.js';
 import { PairingFlow, type PendingPairing } from './pairing.js';
@@ -22,7 +22,7 @@ export const CONNECT_ACCOUNT_TOOL: Tool = {
 const restrictedAccess = 'This connection covers every project you can access in the workspace selected when you approved the connection, including projects shared with you later in that workspace. The server enforces the account’s current project permissions.';
 const result = (value: Record<string, unknown>): CallToolResult => ({ structuredContent: value, content: [{ type: 'text', text: JSON.stringify(value) }] });
 const safeError = (error: unknown): BridgeError => error instanceof BridgeError ? error : new BridgeError('CONNECTION_FAILED', 'The account connection could not complete. Use connect_account to request a new code explicitly.');
-type Remote = Pick<RemoteService, 'callTool' | 'close'> & { initialize(credential?: string): Promise<WorkspaceAccess | void> };
+type Remote = Pick<RemoteService, 'callTool' | 'close'> & { initialize(credential?: string): Promise<WorkspaceAccess | void>; liveAccess?():boolean; refreshCatalog?():Promise<WorkspaceAccess> };
 type Store = Pick<CredentialStore, 'load' | 'save' | 'remove'>;
 type Flow = Pick<PairingFlow, 'start' | 'wait' | 'snapshot' | 'cancel'>;
 type Confirmation = boolean | 'cancelled' | 'not_confirmed' | undefined;
@@ -32,6 +32,7 @@ export class AccountService {
   private readonly makeRemote: () => Remote;
   private readonly onCatalogChanged?: () => void;
   private mode: WorkspaceAccess = 'workspace';
+  private live = false;
   private promoting = false;
   private activeCalls = 0;
   private readonly retired = new Set<Remote>();
@@ -96,6 +97,7 @@ export class AccountService {
         if (remote !== this.remote || this.closed) throw new BridgeError('CANCELLED', 'Account connection changed before the operation was submitted.');
         this.ready = true;
         this.setMode(mode ?? 'workspace');
+        this.setLive(remote.liveAccess?.()??false);
       }).catch(error => {
         if (remote === this.remote && error instanceof BridgeError && error.code === 'AUTH_REQUIRED') { this.secret = undefined; this.credential = undefined; this.setMode('workspace'); }
         throw error;
@@ -110,11 +112,21 @@ export class AccountService {
     this.onCatalogChanged?.();
   }
 
+  private setLive(live:boolean):void {if(live!==this.live){this.live=live;this.onCatalogChanged?.();}}
+  async liveAccess():Promise<boolean>{try{await this.ensureConnected();return this.live;}catch{return false;}}
+
   // A stored label never authorizes a wider catalog. Verify the authenticated
   // remote contract again on every fresh process before advertising it.
   async workspaceAccess(): Promise<boolean> {
-    try { await this.ensureConnected(); return this.mode === 'all'; }
-    catch { return false; }
+    let remote:Remote|undefined;
+    try { await this.ensureConnected();remote=this.remote;if(remote.refreshCatalog){const mode=await remote.refreshCatalog();if(remote===this.remote){this.setMode(mode);this.setLive(remote.liveAccess?.()??false);}}return this.mode === 'all'; }
+    catch(error) {
+      if(remote&&remote===this.remote&&error instanceof BridgeError&&error.code==='AUTH_REQUIRED'){
+        this.ready=false;this.secret=undefined;this.credential=undefined;this.terminal=error;
+        this.setMode('workspace');this.setLive(false);await remote.close();
+      }
+      return false;
+    }
   }
 
   private async closeRetired(): Promise<void> {
@@ -133,7 +145,7 @@ export class AccountService {
       const { userCode, ...details } = pending;
       return result({ ...details, ...(this.privatePairingCode ? {} : { userCode }), instructions: this.privatePairingCode ? 'Use the approval code shown in your host’s private prompt. Approve it in MadDots, then check status.' : 'Open the verification link, sign in to the intended account, enter this code, and approve access. Then call connect_account with action status or request your project operation.', accountAccess });
     }
-    if (this.ready) return result({ status: 'connected', workspaceAccess: this.mode, remoteToolCount: this.mode === 'all' ? 26 : 25, ...(this.terminal ? { replacementError: { code: this.terminal.code, message: this.terminal.message } } : {}), ...(this.credential ? { account: this.credential.account, scopes: this.credential.scopes, expiresAt: this.credential.expiresAt } : { credentialSource: 'environment' }), remembered: this.persistence.persisted, ...(persistenceNotice ? { notice: persistenceNotice } : {}), accountAccess });
+    if (this.ready) return result({ status: 'connected', workspaceAccess: this.mode, remoteToolCount: this.live ? LIVE_TOOL_DEFINITIONS.length : this.mode === 'all' ? ALL_WORKSPACE_TOOL_DEFINITIONS.length : TOOL_DEFINITIONS.length, ...(this.terminal ? { replacementError: { code: this.terminal.code, message: this.terminal.message } } : {}), ...(this.credential ? { account: this.credential.account, scopes: this.credential.scopes, expiresAt: this.credential.expiresAt } : { credentialSource: 'environment' }), remembered: this.persistence.persisted, ...(persistenceNotice ? { notice: persistenceNotice } : {}), accountAccess });
     if (this.terminal) return failure(this.terminal.code, this.terminal.message);
     return result({ status: this.secret ? 'configured' : 'not_connected', instructions: 'Call connect_account with action connect to verify existing authorization or obtain an approval code.', accountAccess });
   }
@@ -183,6 +195,7 @@ export class AccountService {
             this.flow = undefined;
             this.terminal = undefined;
             this.setMode(mode ?? 'workspace');
+            this.setLive(candidate.liveAccess?.()??false);
             this.retired.add(previous);
             await this.closeRetired();
           } finally {
