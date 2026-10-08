@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { mcpConfig } from './config.js';
 // This entry point remains at the configured path, including an npm bin symlink.
 import { realpathSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -15,7 +16,7 @@ export interface LaunchDependencies {
   rollback?: (commit: string) => Promise<unknown>;
   run?: (args: string[], context: RuntimeContext) => Promise<void>;
 }
-const help = 'MadDots MCP\n\nRun without arguments from an MCP host using stdio. Ask the host to call connect_account, then approve its code in MadDots.\n--setup: show an account approval code, wait for approval, and verify tool discovery without a project operation. Existing authorization is reused. Add --read-only to request only kanban:read for a new approval. Add --reconnect to request replacement browser approval while preserving the current login until the replacement is verified and saved. Reconnect the MCP host afterward to load the replacement.\n--version: print the installed bootstrap version.\n--status: show bootstrap, selected runtime and update status without authenticating.\n--update: verify and prepare the latest release.\n--rollback: select the previous verified release for the next connection.\n--self-test: verify local worker initialization and discovery without authentication.\n\nOptional PM_MCP_URL defaults to https://maddots.app/mcp.\nPM_MCP_STATE_DIR overrides the private credential directory outside this checkout.\nAdvanced: PM_MCP_TOKEN or PM_MCP_TOKEN_FILE supplies an existing token instead.\nPM_MCP_AUTO_UPDATE=0 disables automatic updates. PM_MCP_UPDATE_DIR overrides the private update cache.\nUpdates are checked before authentication and every five minutes. Compatible workers switch after 60 seconds without tool activity and with no active requests. Pending authorization, uncertain outcomes and incompatible protocols require keeping the current session or reconnecting the host. Calls are never replayed.\nSee docs/install.md for secure installation and local development.\n';
+const help = 'MadDots MCP\n\nRun without arguments from an MCP host using stdio. Ask the host to call connect_account, then approve its code in MadDots.\n--setup: show an account approval code, wait for approval, and verify tool discovery without a project operation. Existing authorization is reused. Add --read-only to request only kanban:read for a new approval. Add --reconnect to request replacement browser approval while preserving the current login until the replacement is verified and saved. Reconnect the MCP host afterward to load the replacement.\n--version: print the installed bootstrap version.\n--status: show bootstrap, selected runtime and update status without authenticating.\n--update: verify and prepare the latest release.\n--rollback: select the previous verified release for the next connection.\n--self-test: verify local worker initialization and discovery without authentication.\n\nOptional MADDOTS_MCP_URL defaults to https://maddots.app/mcp.\nMADDOTS_MCP_STATE_DIR overrides the private credential directory outside this checkout.\nAdvanced: MADDOTS_MCP_TOKEN or MADDOTS_MCP_TOKEN_FILE supplies an existing token instead.\nMADDOTS_MCP_AUTO_UPDATE=0 disables automatic updates. MADDOTS_MCP_UPDATE_DIR overrides the private update cache.\nLegacy PM_MCP_* names remain supported; MADDOTS_MCP_* takes precedence when both are set. The existing credential directory is retained.\nUpdates are checked before authentication and every five minutes. Compatible workers switch after 60 seconds without tool activity and with no active requests. Pending authorization, uncertain outcomes and incompatible protocols require keeping the current session or reconnecting the host. Calls are never replayed.\nSee docs/install.md for secure installation and local development.\n';
 
 export async function launch(args: string[] = process.argv.slice(2), dependencies: LaunchDependencies = {}): Promise<void> {
   const setup = args.includes('--setup'), readOnly = args.includes('--read-only'), reconnect = args.includes('--reconnect');
@@ -63,7 +64,7 @@ export async function launch(args: string[] = process.argv.slice(2), dependencie
     return;
   }
   // Do this before importing the account runtime, even for a pinned bootstrap.
-  if (options.env.PM_MCP_AUTO_UPDATE !== '0') {
+  if (mcpConfig(options.env, 'AUTO_UPDATE') !== '0') {
     const controller = new AbortController();
     stopStartupCheck = () => controller.abort();
     const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;

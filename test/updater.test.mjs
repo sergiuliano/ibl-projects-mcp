@@ -156,10 +156,10 @@ test('npm infrastructure honors custom registry/proxy/CA/config references witho
   await writeFile(join(options.bundledRoot, '.npmrc'), 'registry=https://registry.example.test/\n//registry.example.test/:_authToken=${PROJECT_TOKEN}\n');
   await writeFile(npm, 'process.stdout.write(JSON.stringify({registry:"https://registry.example.test/", "https-proxy":"https://proxy.example.test", cafile:process.env.FIXTURE_CA, userconfig:process.env.npm_config_userconfig, offline:true, "strict-ssl":true}));');
   // npm_config_ is intentionally supported for configured package infrastructure, not copied to diagnostics.
-  const environment = { ...process.env, npm_execpath: npm, npm_config_userconfig: userconfig, ARTIFACTORY_TOKEN: 'fixture-one', PROJECT_TOKEN: 'fixture-two', PM_MCP_TOKEN: 'app-secret', PROVIDER_SECRET: 'provider-secret', npm_config_cafile: ca };
+  const environment = { ...process.env, npm_execpath: npm, npm_config_userconfig: userconfig, ARTIFACTORY_TOKEN: 'fixture-one', PROJECT_TOKEN: 'fixture-two', PM_MCP_TOKEN: 'app-secret', MADDOTS_MCP_TOKEN: 'app-secret-brand', PROVIDER_SECRET: 'provider-secret', npm_config_cafile: ca };
   await writeFile(npm, (await readFile(npm, 'utf8')).replace('process.env.FIXTURE_CA', 'process.env.npm_config_cafile'));
   const infra = await packageInfrastructure(environment, options.bundledRoot);
-  assert.equal(infra.env.ARTIFACTORY_TOKEN, 'fixture-one'); assert.equal(infra.env.PROJECT_TOKEN, 'fixture-two'); assert.equal(infra.env.PM_MCP_TOKEN, undefined); assert.equal(infra.env.PROVIDER_SECRET, undefined);
+  assert.equal(infra.env.ARTIFACTORY_TOKEN, 'fixture-one'); assert.equal(infra.env.PROJECT_TOKEN, 'fixture-two'); assert.equal(infra.env.PM_MCP_TOKEN, undefined); assert.equal(infra.env.MADDOTS_MCP_TOKEN, undefined); assert.equal(infra.env.PROVIDER_SECRET, undefined);
   assert.equal(infra.proxy, 'https://proxy.example.test'); assert.equal(infra.ca, 'fixture CA'); assert.equal(infra.offline, true); assert.equal(infra.env.NODE_EXTRA_CA_CERTS, ca);
   assert.equal(installEnvironment(environment).npm_config_userconfig, userconfig);
 });
@@ -258,4 +258,28 @@ test('release download requires HTTPS without URL credentials and honors offline
   for (const url of ['http://release.example.test/artifact', 'https://user:fixture-secret@release.example.test/artifact']) await assert.rejects(downloadRelease(url, 1024, downloadInfrastructure, undefined, adapter), /NETWORK_UNAVAILABLE/);
   await assert.rejects(downloadRelease('https://release.example.test/artifact', 1024, { ...downloadInfrastructure, offline: true }, undefined, adapter), /NETWORK_OFFLINE/);
   assert.equal(requests, 0);
+});
+
+
+test('update manifests accept only the preferred and legacy package names on the existing trust channel', async t => {
+  for (const [name, valid] of [['maddots-mcp', true], ['ibl-projects-mcp', true], ['unrelated-mcp', false]]) {
+    const { options } = await fixture(t);
+    const candidate = backend(commitA, '0.6.2', {
+      async prepare(_release, target) {
+        await mkdir(join(target, 'dist'));
+        await writeFile(join(target, 'package.json'), JSON.stringify({ name, private: true, version: '0.6.2', maddotsMcp: { supervisorVersion: 1, workerProtocol: 1 } }));
+        await writeFile(join(target, 'dist/cli.js'), '// fixture');
+        await writeFile(join(target, 'dist/worker.js'), '// fixture');
+      },
+    });
+    const result = await checkForUpdate(options, candidate);
+    assert.equal(result.status, valid ? 'prepared' : 'failed');
+    if (!valid) assert.equal(result.reason, 'INVALID_MANIFEST');
+  }
+  const { directory, options } = await fixture(t);
+  const env = { MADDOTS_MCP_AUTO_UPDATE: '0', PM_MCP_AUTO_UPDATE: '1', MADDOTS_MCP_UPDATE_DIR: join(directory, 'branded-cache'), MADDOTS_MCP_STATE_DIR: join(directory, 'branded-credentials') };
+  assert.equal(updateDirectory({ ...options, env }), env.MADDOTS_MCP_UPDATE_DIR);
+  assert.equal((await checkForUpdate({ ...options, env }, backend())).status, 'disabled');
+  assert.throws(() => updateDirectory({ ...options, env: { ...env, MADDOTS_MCP_UPDATE_DIR: env.MADDOTS_MCP_STATE_DIR } }), /CACHE_UNSAFE/);
+  assert.throws(() => updateDirectory({ ...options, repository: 'sergiuliano/maddots-mcp' }), /REPOSITORY_NOT_ALLOWED/);
 });

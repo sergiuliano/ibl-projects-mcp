@@ -1,3 +1,4 @@
+import { mcpConfig } from './config.js';
 // Release discovery is untrusted until Sigstore verifies the fixed workflow identity and signed digest.
 import { execFile, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
@@ -41,10 +42,10 @@ function repository(options: UpdateOptions): string {
 }
 export function updateDirectory(options: UpdateOptions): string {
   repository(options);
-  const directory = options.env.PM_MCP_UPDATE_DIR || join(homedir(), '.cache', 'maddots-mcp', 'updates');
+  const directory = mcpConfig(options.env, 'UPDATE_DIR') || join(homedir(), '.cache', 'maddots-mcp', 'updates');
   if (!isAbsolute(directory)) throw new Error('CACHE_UNSAFE');
   const root = resolve(directory), install = resolve(options.bundledRoot);
-  const state = resolve(options.env.PM_MCP_STATE_DIR || join(homedir(), '.config', 'ibl-projects-mcp'));
+  const state = resolve(mcpConfig(options.env, 'STATE_DIR') || join(homedir(), '.config', 'ibl-projects-mcp'));
   if (within(install, root) || within(root, install) || within(state, root) || within(root, state)) throw new Error('CACHE_UNSAFE');
   return root;
 }
@@ -61,7 +62,7 @@ async function canonicalLocation(path: string): Promise<string> {
 }
 async function validateCacheLocation(options: UpdateOptions, directory: string): Promise<void> {
   const actual = await canonicalLocation(directory);
-  for (const protectedPath of [options.bundledRoot, options.env.PM_MCP_STATE_DIR || join(homedir(), '.config', 'ibl-projects-mcp'), options.env.PM_MCP_TOKEN_FILE]) if (protectedPath) {
+  for (const protectedPath of [options.bundledRoot, mcpConfig(options.env, 'STATE_DIR') || join(homedir(), '.config', 'ibl-projects-mcp'), mcpConfig(options.env, 'TOKEN_FILE')]) if (protectedPath) {
     // Resolve existing parents even before a state directory or token exists. This check creates no credentials or directories.
     const protectedReal = await canonicalLocation(protectedPath);
     if (within(actual, protectedReal) || within(protectedReal, actual)) throw new Error('CACHE_UNSAFE');
@@ -98,7 +99,7 @@ async function readPointer(directory: string): Promise<Pointer | undefined> {
 }
 function metadata(manifest: any): { version: string; supervisorVersion: number; workerProtocol: number } {
   const compatibility = record(manifest?.maddotsMcp);
-  if (manifest?.name !== 'ibl-projects-mcp' || manifest.private !== true || typeof manifest.version !== 'string' ||
+  if (!['maddots-mcp', 'ibl-projects-mcp'].includes(manifest?.name) || manifest.private !== true || typeof manifest.version !== 'string' ||
       !compatibility || !Number.isSafeInteger(compatibility.supervisorVersion) || compatibility.supervisorVersion < 1 || !Number.isSafeInteger(compatibility.workerProtocol) || compatibility.workerProtocol < 1) throw new Error('INVALID_MANIFEST');
   compare(manifest.version, manifest.version);
   return { version: manifest.version, supervisorVersion: compatibility.supervisorVersion, workerProtocol: compatibility.workerProtocol };
@@ -250,7 +251,7 @@ async function prepareSigned(options: UpdateOptions, release: SignedRelease, tar
 }
 async function validateConnection(options: UpdateOptions, target: string, infrastructure: PackageInfrastructure): Promise<void> {
   // This internal mode must initialize/list tools locally without account setup, pairing or a data operation.
-  await exec(process.execPath, [join(target, 'dist/cli.js'), '--self-test'], { cwd: target, env: { ...infrastructure.env, PM_MCP_AUTO_UPDATE: '0' }, timeout: 30000, maxBuffer: 1024 * 1024, signal: options.signal, windowsHide: true });
+  await exec(process.execPath, [join(target, 'dist/cli.js'), '--self-test'], { cwd: target, env: { ...infrastructure.env, PM_MCP_AUTO_UPDATE: '0', MADDOTS_MCP_AUTO_UPDATE: '0' }, timeout: 30000, maxBuffer: 1024 * 1024, signal: options.signal, windowsHide: true });
 }
 async function validateInstalled(options: UpdateOptions, target: string, infrastructure: PackageInfrastructure): Promise<void> {
   const config = join(target, '.npmrc');
@@ -331,7 +332,7 @@ export async function rollbackRelease(options: UpdateOptions, commit?: string): 
 // Injection has no environment/CLI hook. It makes failure-path tests deterministic and never weakens production verification.
 export interface UpdateBackend { latest(): Promise<SignedRelease>; prepare(release: SignedRelease, target: string): Promise<void>; validate(target: string): Promise<void> }
 export async function checkForUpdate(options: UpdateOptions, fixture?: UpdateBackend): Promise<UpdateResult> {
-  if (options.env.PM_MCP_AUTO_UPDATE === '0' && !options.force) return { status: 'disabled' };
+  if (mcpConfig(options.env, 'AUTO_UPDATE') === '0' && !options.force) return { status: 'disabled' };
   let lock: UpdateLock | undefined, staging: string | undefined, checkedAt: string | undefined;
   let phase = 'CACHE_UNAVAILABLE';
   const finish = async (result: UpdateResult): Promise<UpdateResult> => { await remember(options, { ...result, checkedAt, finishedAt: new Date().toISOString() }); return result; };
@@ -394,10 +395,10 @@ export async function diagnosticStatus(options: UpdateOptions): Promise<{ bootst
   let lastCheck = lastStatuses.get(resolve(options.bundledRoot));
   try { directory = updateDirectory(options); await privateDirectory(directory); await validateCacheLocation(options, directory); available = true; const saved = await json(join(directory, 'last-check.json')); if (saved && typeof saved.status === 'string' && (!lastCheck || Date.parse(saved.finishedAt || saved.checkedAt) > Date.parse(lastCheck.finishedAt || lastCheck.checkedAt || ''))) lastCheck = { status: saved.status, checkedAt: saved.checkedAt, finishedAt: saved.finishedAt, ...(saved.reason && /^[A-Z_]{1,64}$/.test(saved.reason) ? { reason: saved.reason } : {}), ...(SHA.test(saved.commit) ? { commit: saved.commit } : {}), ...(typeof saved.version === 'string' && /^\d+\.\d+\.\d+$/.test(saved.version) ? { version: saved.version } : {}) }; }
   catch { if (!available) reason = 'CACHE_UNAVAILABLE'; }
-  return { bootstrap: { version: options.version, root: options.bundledRoot }, selectedRuntime: await selectRelease(options), automaticUpdates: options.env.PM_MCP_AUTO_UPDATE !== '0', checkIntervalMs: UPDATE_CHECK_INTERVAL_MS, lastCheck: lastCheck || null, cache: { directory, available, reason } };
+  return { bootstrap: { version: options.version, root: options.bundledRoot }, selectedRuntime: await selectRelease(options), automaticUpdates: mcpConfig(options.env, 'AUTO_UPDATE') !== '0', checkIntervalMs: UPDATE_CHECK_INTERVAL_MS, lastCheck: lastCheck || null, cache: { directory, available, reason } };
 }
 export function startUpdateChecks(options: UpdateOptions, onChecked?: (result: UpdateResult) => void | Promise<void>): () => void {
-  if (options.env.PM_MCP_AUTO_UPDATE === '0') return () => {};
+  if (mcpConfig(options.env, 'AUTO_UPDATE') === '0') return () => {};
   const controller = new AbortController(); let running = false;
   const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
   const check = async () => {

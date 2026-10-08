@@ -4,7 +4,7 @@ import { lstat, mkdir, open, realpath, rename, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BridgeError, readPrivateFile, supportsPrivateFiles, validateToken } from './config.js';
+import { mcpConfig, BridgeError, readPrivateFile, supportsPrivateFiles, validateToken } from './config.js';
 
 export type Scope = 'kanban:read' | 'kanban:write';
 export type Account = { id: string; name: string };
@@ -29,10 +29,11 @@ export class CredentialStore {
   readonly directory: string;
   readonly path: string;
   constructor(private readonly endpoint: URL, env: NodeJS.ProcessEnv = process.env, private readonly supported = supportsPrivateFiles()) {
-    const configured = env.PM_MCP_STATE_DIR || join(homedir(), '.config', 'ibl-projects-mcp');
-    if (!isAbsolute(configured)) throw new BridgeError('CONFIG_ERROR', 'PM_MCP_STATE_DIR must be an absolute private directory outside the client checkout.');
+    const configured = mcpConfig(env, 'STATE_DIR') || join(homedir(), '.config', 'ibl-projects-mcp');
+    if (!isAbsolute(configured)) throw new BridgeError('CONFIG_ERROR', 'MADDOTS_MCP_STATE_DIR must be an absolute private directory outside the client checkout.');
     this.directory = resolve(configured);
-    for (const packageRoot of [resolve(dirname(fileURLToPath(import.meta.url)), '..'), ...(env.PM_MCP_INSTALL_ROOT ? [resolve(env.PM_MCP_INSTALL_ROOT)] : [])]) {
+    const installRoot = mcpConfig(env, 'INSTALL_ROOT');
+    for (const packageRoot of [resolve(dirname(fileURLToPath(import.meta.url)), '..'), ...(installRoot ? [resolve(installRoot)] : [])]) {
       const distance = relative(packageRoot, this.directory);
       if (!distance || (!distance.startsWith(`..${sep}`) && !isAbsolute(distance))) throw new BridgeError('CONFIG_ERROR', 'Account credentials must be stored outside the client checkout.');
     }

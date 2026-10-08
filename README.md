@@ -1,31 +1,35 @@
 # MadDots MCP client
 
+Version 0.6.2 uses the preferred `maddots-mcp` executable and source package name. The `ibl-projects-mcp` executable remains an alias for existing host commands. Prefer `MADDOTS_MCP_*` configuration variables; matching `PM_MCP_*` names remain supported, and the preferred spelling wins when both are set. Saved approvals remain in `~/.config/ibl-projects-mcp/` by default so existing connections survive the rename. Keep the same endpoint and credential directory. The signed runtime archive deliberately retains the legacy `ibl-projects-mcp` package identity so older verified updaters can accept this bridge release. The public repository, signing key and exact Sigstore workflow identity remain `sergiuliano/ibl-projects-mcp`; this compatibility channel will be retired only after a separately verified migration. No new npm registry package is published.
+
+If the installed bootstrap is older than 0.6.2, keep its `PM_MCP_*` settings until you manually install the 0.6.2 bootstrap and restart the host. A cached runtime update does not replace that bootstrap: its startup updater, `--status` and `--rollback` still read the legacy names. To introduce a branded setting during this transition, set both matching names to the same value, especially `PM_MCP_AUTO_UPDATE` / `MADDOTS_MCP_AUTO_UPDATE` and `PM_MCP_UPDATE_DIR` / `MADDOTS_MCP_UPDATE_DIR`. Remove the legacy spelling only after the installed executable reports 0.6.2 or newer with `--version`.
+
 Connect an MCP host to your MadDots account through a local stdio client. Ask the host to call `connect_account`, open https://maddots.app/integrations, and approve the eight-character code in MadDots. You do not need to copy a token. The client shows the code through host form elicitation when supported, keeping it out of tool results; otherwise it returns the code to your MCP host. It checks for approval in the background for up to five minutes.
 
 During browser approval, choose all accessible workspaces (including ones you gain access to later) or restrict the connection to the selected workspace. Existing credentials keep their approved scope until you explicitly reconnect and approve a replacement. You can request read-only or read/write account access; the server continues to enforce your current project permissions. Sharing and membership administration stay in the MadDots interface.
 
 This client requires an MCP-enabled MadDots server with account pairing enabled. The default endpoint is `https://maddots.app/mcp`; availability depends on the operator's separate server deployment. Publishing or installing this client does not deploy or enable that service. The application server, database, private implementation, and deployment configuration are not included.
 
-Follow [the installation guide](docs/install.md) to install the version-pinned `v0.6.1` bootstrap from GitHub or build the signed source tag. The package is not published to the npm registry and remains `private: true`.
+Follow [the installation guide](docs/install.md) to install the version-pinned `v0.6.2` bootstrap from GitHub or build the signed source tag. The package is not published to the npm registry and remains `private: true`.
 
 For npm and npx, use the GitHub release tarball URL, including its version. These commands depend on that release having been published:
 
 ```sh
-npm install --global --ignore-scripts https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.6.1/client-update.tgz
-ibl-projects-mcp --setup
+npm install --global --ignore-scripts https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.6.2/client-update.tgz
+maddots-mcp --setup
 ```
 
 ```sh
-npx --yes --ignore-scripts --package=https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.6.1/client-update.tgz ibl-projects-mcp --setup
+npx --yes --ignore-scripts --package=https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.6.2/client-update.tgz maddots-mcp --setup
 ```
 
 For a bootstrap verified against the existing source signing key, follow [the signature and artifact verification steps](docs/install.md#verify-the-bootstrap-artifact) before installing the downloaded archive. A source checkout remains supported:
 
 ```sh
-git clone --branch v0.6.1 --depth 1 https://github.com/sergiuliano/ibl-projects-mcp.git &&
+git clone --branch v0.6.2 --depth 1 https://github.com/sergiuliano/ibl-projects-mcp.git &&
 cd ibl-projects-mcp &&
 git config gpg.ssh.allowedSignersFile /ABSOLUTE/PATH/allowed_signers &&
-git verify-tag v0.6.1 &&
+git verify-tag v0.6.2 &&
 npm ci --ignore-scripts &&
 npm run build &&
 node dist/cli.js --setup
@@ -40,9 +44,9 @@ Existing installations older than 0.5.1 need one manual upgrade to this bootstra
 For an existing source checkout with release signing trust already configured:
 
 ```sh
-git fetch origin tag v0.6.1 &&
-git verify-tag v0.6.1 &&
-git checkout --detach v0.6.1 &&
+git fetch origin tag v0.6.2 &&
+git verify-tag v0.6.2 &&
+git checkout --detach v0.6.2 &&
 npm ci --ignore-scripts &&
 npm run build &&
 node dist/cli.js --setup
@@ -53,12 +57,12 @@ node dist/cli.js --setup
 
 The terminal `--setup --reconnect` flag requires a 0.6.1 or newer bootstrap. Upgrade an older installed bootstrap for this flag, or request reconnect through the host account tool. A runtime update alone does not change the bootstrap argument parser.
 
-For independent host approvals, give each host its own absolute `PM_MCP_STATE_DIR`. The default directory shares credentials by exact endpoint, so installing another host may reuse an existing approval. Existing configurations are not silently migrated.
+For independent host approvals, give each host its own absolute `MADDOTS_MCP_STATE_DIR`. The default directory shares credentials by exact endpoint, so installing another host may reuse an existing approval. Existing configurations are not silently migrated.
 
 For Claude Code with a stable source installation:
 
 ```sh
-claude mcp add --env PM_MCP_STATE_DIR=/ABSOLUTE/PATH/maddots-claude-code \
+claude mcp add --env MADDOTS_MCP_STATE_DIR=/ABSOLUTE/PATH/maddots-claude-code \
   --transport stdio --scope user maddots \
   -- /ABSOLUTE/PATH/node /ABSOLUTE/PATH/maddots-mcp/dist/cli.js
 ```
@@ -66,10 +70,10 @@ claude mcp add --env PM_MCP_STATE_DIR=/ABSOLUTE/PATH/maddots-claude-code \
 Replace the paths with your absolute paths. Keep at least one other option between the variadic `--env` option and the server name, as shown by `--transport` and `--scope`, and `--` before the executable. Use the same directory for terminal setup or reconnect:
 
 ```sh
-PM_MCP_STATE_DIR=/ABSOLUTE/PATH/maddots-claude-code \
+MADDOTS_MCP_STATE_DIR=/ABSOLUTE/PATH/maddots-claude-code \
   /ABSOLUTE/PATH/node /ABSOLUTE/PATH/maddots-mcp/dist/cli.js --setup
 
-PM_MCP_STATE_DIR=/ABSOLUTE/PATH/maddots-claude-code \
+MADDOTS_MCP_STATE_DIR=/ABSOLUTE/PATH/maddots-claude-code \
   /ABSOLUTE/PATH/node /ABSOLUTE/PATH/maddots-mcp/dist/cli.js --setup --reconnect
 ```
 
@@ -77,7 +81,7 @@ Approve the displayed code yourself at https://maddots.app/integrations and choo
 
 Reconnect and disconnect use host confirmation when form elicitation is supported. `confirm: true` never bypasses that confirmation. A cancelled confirmation is the host's returned outcome, not evidence that the user declined or that the desktop automatically declines. Preserve the existing connection and wait for an explicit new request; do not automatically retry or bypass confirmation.
 
-On supported POSIX systems, approved credentials are remembered in a private configuration directory outside the checkout and bound to the exact MCP endpoint. Systems without the required file ownership and no-follow checks keep the login for the current client session only. No OS Keychain or password manager is accessed. Advanced installations can still use `PM_MCP_TOKEN` or `PM_MCP_TOKEN_FILE` instead. Paired credentials expire after 30 days; call `connect_account` with `action: "reconnect"` to approve a replacement.
+On supported POSIX systems, approved credentials are remembered in a private configuration directory outside the checkout and bound to the exact MCP endpoint. Systems without the required file ownership and no-follow checks keep the login for the current client session only. No OS Keychain or password manager is accessed. Advanced installations can still use `MADDOTS_MCP_TOKEN` or `MADDOTS_MCP_TOKEN_FILE` instead. Paired credentials expire after 30 days; call `connect_account` with `action: "reconnect"` to approve a replacement.
 
 The client accepts two exact authenticated catalogs: 25 project tools for a restricted credential, or 26 tools including `list_workspaces` for an all-workspaces grant. It adds one local `connect_account` tool. Before authorization it advertises the restricted schemas; after verification it refreshes the host catalog. A fresh process verifies the saved credential before advertising broad tools. The local account tool is not sent to the hosted MCP service. Failed project operations are never automatically retried. If a mutation's response is lost, inspect project state before repeating it.
 

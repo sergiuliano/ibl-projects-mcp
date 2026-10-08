@@ -1,3 +1,4 @@
+import { mcpConfig } from './config.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -62,7 +63,7 @@ function parseState(value: unknown): WorkerState {
 }
 
 export async function createWorker(root: string, environment: NodeJS.ProcessEnv, signal?: AbortSignal): Promise<Worker> {
-  const env = Object.fromEntries(Object.entries({ ...environment, PM_MCP_AUTO_UPDATE: '0', PM_MCP_WORKER: '1' })
+  const env = Object.fromEntries(Object.entries({ ...environment, PM_MCP_AUTO_UPDATE: '0', MADDOTS_MCP_AUTO_UPDATE: '0', PM_MCP_WORKER: '1' })
     .filter((entry): entry is [string, string] => entry[1] !== undefined));
   const client = new Client({ name: 'maddots-supervisor', version: String(SUPERVISOR_VERSION) }, { capabilities: { elicitation: { form: {} } } });
   let protocolVersion = '';
@@ -128,7 +129,7 @@ export class Supervisor {
     this.lastToolActivity = this.now();
     this.capabilities = worker.client.getServerCapabilities() || {};
     this.instructions = worker.client.getInstructions();
-    this.server = new Server(worker.client.getServerVersion() || { name: 'ibl-projects-mcp', version: state.version }, {
+    this.server = new Server(worker.client.getServerVersion() || { name: 'maddots-mcp', version: state.version }, {
       // The stable supervisor emits catalog changes even when a worker does not.
       // Keep the unmodified worker capabilities separately for swap compatibility.
       capabilities: { ...this.capabilities, tools: { ...this.capabilities.tools, listChanged: true } }, instructions: this.instructions,
@@ -192,7 +193,7 @@ export class Supervisor {
   static async create(options: UpdateOptions, dependencies: SupervisorDependencies = {}, context?: Pick<RuntimeContext, 'bootstrapRoot' | 'bootstrapVersion' | 'runtimeRoot' | 'runtimeVersion'>): Promise<Supervisor> {
     const shutdown = new AbortController();
     const identity = context || { bootstrapRoot: options.bundledRoot, bootstrapVersion: options.version, runtimeRoot: options.bundledRoot, runtimeVersion: options.version };
-    const factory = dependencies.createWorker || (root => createWorker(root, { ...options.env, PM_MCP_INSTALL_ROOT: identity.bootstrapRoot }, shutdown.signal));
+    const factory = dependencies.createWorker || (root => createWorker(root, { ...options.env, PM_MCP_INSTALL_ROOT: identity.bootstrapRoot, MADDOTS_MCP_INSTALL_ROOT: identity.bootstrapRoot }, shutdown.signal));
     const worker = await factory(identity.runtimeRoot);
     try {
       await worker.client.listTools();
@@ -208,7 +209,7 @@ export class Supervisor {
     return {
       bootstrap: { root: this.identity.bootstrapRoot, version: this.identity.bootstrapVersion },
       runtime: { root: this.active.root, version: this.activeState.version, supervisorVersion: SUPERVISOR_VERSION, workerProtocol: WORKER_PROTOCOL, supervisorDigest: this.activeState.supervisorDigest, protocolVersion: this.active.protocolVersion },
-      automaticUpdates: this.options.env.PM_MCP_AUTO_UPDATE !== '0', activeRequests: this.count,
+      automaticUpdates: mcpConfig(this.options.env, 'AUTO_UPDATE') !== '0', activeRequests: this.count,
       ...(this.pending ? { prepared: { root: this.pending.root, version: this.pending.version, commit: this.pending.commit } } : {}),
       reconnectRequired: !!(this.reconnectReason || this.uncertain || this.dead || this.deferredReason),
       ...(this.reconnectReason || this.deferredReason ? { reason: this.reconnectReason || this.deferredReason } : {}),
@@ -235,7 +236,7 @@ export class Supervisor {
     };
   }
   private checkCompatibility(worker: Worker): void {
-    if (this.closed || this.options.env.PM_MCP_AUTO_UPDATE === '0' || this.checkedRoots.has(worker.root)) return;
+    if (this.closed || mcpConfig(this.options.env, 'AUTO_UPDATE') === '0' || this.checkedRoots.has(worker.root)) return;
     this.checkedRoots.add(worker.root);
     void this.checkNow(true).catch(() => {});
   }

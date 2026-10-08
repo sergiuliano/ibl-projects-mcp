@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { Buffer } from 'node:buffer';
 import { constants } from 'node:fs';
 import { access, copyFile, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -14,15 +15,14 @@ const args = process.argv.slice(2);
 assert.ok(args.length === 0 || (args.length === 2 && args[0] === '--output'), 'Usage: prepare-release.mjs [--output DIRECTORY]');
 const output = resolve(args[1] || join(root, 'release'));
 const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
-assert.equal(pkg.name, 'ibl-projects-mcp');
+assert.equal(pkg.name, 'maddots-mcp');
 assert.equal(pkg.private, true, 'npm publication must remain disabled.');
 assert.equal(pkg.license, 'MIT');
 assert.match(pkg.version, /^\d+\.\d+\.\d+$/);
-assert.deepEqual(pkg.bin, { 'ibl-projects-mcp': 'dist/cli.js' });
+assert.deepEqual(pkg.bin, { 'maddots-mcp': 'dist/cli.js', 'ibl-projects-mcp': 'dist/cli.js' });
 assert.deepEqual(pkg.maddotsMcp, { supervisorVersion: 1, workerProtocol: 1 });
 assert.deepEqual(pkg.repository, { type: 'git', url: 'git+https://github.com/sergiuliano/ibl-projects-mcp.git' });
-const lockBytes = await readFile(join(root, 'package-lock.json'));
-const lock = JSON.parse(lockBytes.toString('utf8'));
+const lock = JSON.parse(await readFile(join(root, 'package-lock.json'), 'utf8'));
 assert.equal(lock.lockfileVersion, 3, 'A reviewed npm v3 lockfile is required.');
 assert.equal(lock.name, pkg.name);
 assert.equal(lock.version, pkg.version);
@@ -35,6 +35,13 @@ for (const [path, dependency] of Object.entries(lock.packages)) {
   assert.match(dependency.resolved, /^https:\/\/registry\.npmjs\.org\//, 'Dependencies must come from the reviewed registry lock.');
   assert.match(dependency.integrity, /^sha512-[A-Za-z0-9+/]+=*$/, 'Every dependency needs a locked integrity digest.');
 }
+// Existing bootstrap updaters accept only this package identity. Keep the signed
+// bridge archive on that channel while the source package and executable use MadDots.
+const runtimeName = 'ibl-projects-mcp';
+const runtimeLock = JSON.parse(JSON.stringify(lock));
+runtimeLock.name = runtimeName;
+runtimeLock.packages[''].name = runtimeName;
+const lockBytes = Buffer.from(JSON.stringify(runtimeLock, null, 2) + '\n');
 const modules = new Set(['contract', 'server', 'remote', 'cli', 'config', 'account', 'credentials', 'pairing', 'runtime', 'worker', 'supervisor', 'updater', 'npm']);
 const allowedPath = path => {
   if (['package.json', 'npm-shrinkwrap.json', 'LICENSE'].includes(path)) return true;
@@ -48,8 +55,8 @@ const exists = async path => {
 const work = await mkdtemp(join(tmpdir(), 'maddots-client-release-'));
 const stage = join(work, 'package');
 const clean = join(work, 'clean');
-const env = { ...process.env, PATH: dirname(process.execPath) + ':' + (process.env.PATH || ''), PM_MCP_AUTO_UPDATE: '0', PM_MCP_STATE_DIR: join(work, 'unused-credentials'), PM_MCP_UPDATE_DIR: join(work, 'unused-updates') };
-for (const name of ['PM_MCP_TOKEN', 'PM_MCP_TOKEN_FILE', 'PM_MCP_URL', 'PM_MCP_ALLOW_INSECURE_LOOPBACK']) delete env[name];
+const env = { ...process.env, PATH: dirname(process.execPath) + ':' + (process.env.PATH || ''), PM_MCP_AUTO_UPDATE: '0', MADDOTS_MCP_AUTO_UPDATE: '0', PM_MCP_STATE_DIR: join(work, 'unused-credentials'), MADDOTS_MCP_STATE_DIR: join(work, 'unused-credentials'), PM_MCP_UPDATE_DIR: join(work, 'unused-updates'), MADDOTS_MCP_UPDATE_DIR: join(work, 'unused-updates') };
+for (const prefix of ['PM_MCP_', 'MADDOTS_MCP_']) for (const suffix of ['TOKEN', 'TOKEN_FILE', 'URL', 'ALLOW_INSECURE_LOOPBACK', 'INSTALL_ROOT', 'WORKER']) delete env[prefix + suffix];
 const command = (program, commandArgs, cwd, timeout = 180_000) => execFileSync(program, commandArgs, {
   cwd, env, encoding: 'utf8', timeout, maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'],
 });
@@ -67,7 +74,7 @@ try {
   }
   for (const module of modules) assert.ok(compiled.includes(module + '.js'), 'Missing runtime module: ' + module);
   const runtimePackage = {
-    name: pkg.name, version: pkg.version, private: true, license: pkg.license,
+    name: runtimeName, version: pkg.version, private: true, license: pkg.license,
     type: 'module', description: pkg.description, repository: pkg.repository,
     engines: pkg.engines, bin: pkg.bin, maddotsMcp: pkg.maddotsMcp,
     files: ['dist', 'npm-shrinkwrap.json', 'LICENSE'], dependencies: pkg.dependencies,
@@ -100,7 +107,7 @@ try {
   await copyFile(artifact, temporary);
   await rename(temporary, join(output, 'client-update.tgz'));
   await writeFile(join(output, 'client-update.tgz.sha256'), digest + '  client-update.tgz\n');
-  process.stdout.write(JSON.stringify({ artifact: join(output, 'client-update.tgz'), sha256: digest, package: pkg.name, version: pkg.version, files: packed[0].files.length, cleanInstall: 'passed', selfTest: 'passed', npmPublication: false }) + '\n');
+  process.stdout.write(JSON.stringify({ artifact: join(output, 'client-update.tgz'), sha256: digest, package: runtimeName, sourcePackage: pkg.name, version: pkg.version, files: packed[0].files.length, cleanInstall: 'passed', selfTest: 'passed', npmPublication: false }) + '\n');
 } finally {
   await rm(work, { recursive: true, force: true });
 }

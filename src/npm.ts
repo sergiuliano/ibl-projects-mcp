@@ -53,7 +53,7 @@ export async function packageInfrastructure(environment: NodeJS.ProcessEnv, root
   // Include only variables referenced by configured npmrc files, supporting managed registries with custom token names.
   // Application credentials are never passed to package installation, even if accidentally referenced by npmrc.
   const copyReferenced = (text: string): void => {
-    for (const match of text.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g)) if (!match[1].startsWith('PM_MCP_') && environment[match[1]] !== undefined) env[match[1]] = environment[match[1]];
+    for (const match of text.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g)) if (!match[1].startsWith('PM_MCP_') && !match[1].startsWith('MADDOTS_MCP_') && environment[match[1]] !== undefined) env[match[1]] = environment[match[1]];
   };
   const home = environment.HOME || environment.USERPROFILE || homedir();
   const configPaths = new Set([

@@ -1,6 +1,6 @@
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 import { READ_CONTENT_NOTICE } from './contract.js';
-import { accessToken, BridgeError, endpoint } from './config.js';
+import { mcpConfig, accessToken, BridgeError, endpoint } from './config.js';
 import { CredentialStore, type Credential, type Persistence, type Scope } from './credentials.js';
 import { PairingFlow, type PendingPairing } from './pairing.js';
 import { failure, RemoteService, type WorkspaceAccess } from './remote.js';
@@ -72,7 +72,7 @@ export class AccountService {
     if (this.loaded) return;
     if (!this.loading) {
       this.loading = (async () => {
-        if (this.env.PM_MCP_TOKEN || this.env.PM_MCP_TOKEN_FILE) this.secret = await accessToken(this.env);
+        if (mcpConfig(this.env, 'TOKEN') || mcpConfig(this.env, 'TOKEN_FILE')) this.secret = await accessToken(this.env);
         else {
           this.credential = await this.store.load();
           this.secret = this.credential?.secret;
@@ -126,8 +126,8 @@ export class AccountService {
 
   private status(): CallToolResult {
     const accountAccess = this.mode === 'all' ? 'This connection covers all workspaces you can currently access, including workspaces shared with you later. Use list_workspaces to resolve names, clarify ambiguous matches, and pass workspaceId to each operation. Current membership, project permissions and approved read/write scopes still apply.' : restrictedAccess;
-    const environmentOverride = !!this.credential && this.generation > 0 && !!(this.env.PM_MCP_TOKEN || this.env.PM_MCP_TOKEN_FILE);
-    const persistenceNotice = [this.persistence.notice, ...(environmentOverride ? ['The current session uses the newly approved account. The host environment still overrides saved authorization after a restart. Remove or update PM_MCP_TOKEN or PM_MCP_TOKEN_FILE through your host configuration before reconnecting; never paste credentials into chat.'] : [])].filter(Boolean).join(' ');
+    const environmentOverride = !!this.credential && this.generation > 0 && !!(mcpConfig(this.env, 'TOKEN') || mcpConfig(this.env, 'TOKEN_FILE'));
+    const persistenceNotice = [this.persistence.notice, ...(environmentOverride ? ['The current session uses the newly approved account. The host environment still overrides saved authorization after a restart. Remove or update MADDOTS_MCP_TOKEN or MADDOTS_MCP_TOKEN_FILE through your host configuration before reconnecting; never paste credentials into chat.'] : [])].filter(Boolean).join(' ');
     const pending = this.flow?.snapshot();
     if (pending) {
       const { userCode, ...details } = pending;
@@ -298,7 +298,7 @@ export class AccountService {
     if (this.terminal || (this.loaded && !this.secret && (this.hadCredential || this.generation > 0))) {
       return { safe: false, reason: 'Account authorization changed in this session. Reconnect the MCP host to apply the update.' };
     }
-    if (this.generation > 0 && (this.env.PM_MCP_TOKEN || this.env.PM_MCP_TOKEN_FILE)) {
+    if (this.generation > 0 && (mcpConfig(this.env, 'TOKEN') || mcpConfig(this.env, 'TOKEN_FILE'))) {
       return { safe: false, reason: 'Environment authorization was replaced in this session. Update that configuration and reconnect the MCP host to apply the update.' };
     }
     if (this.secret && this.credential && !this.persistence.persisted) {

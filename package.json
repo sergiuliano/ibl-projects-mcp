@@ -1,6 +1,6 @@
 {
-  "name": "ibl-projects-mcp",
-  "version": "0.6.1",
+  "name": "maddots-mcp",
+  "version": "0.6.2",
   "private": true,
   "license": "MIT",
   "description": "Installable MCP stdio client for the authenticated MadDots Kanban service",
@@ -9,6 +9,7 @@
     "node": "^22.22.2 || ^24.15.0"
   },
   "bin": {
+    "maddots-mcp": "dist/cli.js",
     "ibl-projects-mcp": "dist/cli.js"
   },
   "files": [

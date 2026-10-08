@@ -3,6 +3,11 @@ import { open, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+/** Preferred branding with the existing host configuration retained as an alias. */
+export function mcpConfig(env: NodeJS.ProcessEnv, suffix: string): string | undefined {
+  return env[`MADDOTS_MCP_${suffix}`] ?? env[`PM_MCP_${suffix}`];
+}
+
 export class BridgeError extends Error {
   constructor(readonly code: string, message: string) {
     super(message);
@@ -12,12 +17,12 @@ export class BridgeError extends Error {
 
 export function endpoint(env: NodeJS.ProcessEnv): URL {
   let url: URL;
-  try { url = new URL(env.PM_MCP_URL || 'https://maddots.app/mcp'); }
-  catch { throw new BridgeError('CONFIG_ERROR', 'PM_MCP_URL must be a valid HTTPS endpoint.'); }
+  try { url = new URL(mcpConfig(env, 'URL') || 'https://maddots.app/mcp'); }
+  catch { throw new BridgeError('CONFIG_ERROR', 'MADDOTS_MCP_URL must be a valid HTTPS endpoint.'); }
   const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
-  const development = env.PM_MCP_ALLOW_INSECURE_LOOPBACK === '1' && loopback && url.protocol === 'http:';
+  const development = mcpConfig(env, 'ALLOW_INSECURE_LOOPBACK') === '1' && loopback && url.protocol === 'http:';
   if ((url.protocol !== 'https:' && !development) || url.username || url.password || url.search || url.hash) {
-    throw new BridgeError('CONFIG_ERROR', 'Use HTTPS without URL credentials, a query, or a fragment. Local HTTP also requires PM_MCP_ALLOW_INSECURE_LOOPBACK=1.');
+    throw new BridgeError('CONFIG_ERROR', 'Use HTTPS without URL credentials, a query, or a fragment. Local HTTP also requires MADDOTS_MCP_ALLOW_INSECURE_LOOPBACK=1.');
   }
   return url;
 }
@@ -31,22 +36,24 @@ export function validateToken(value: string): string {
 }
 
 export async function accessToken(env: NodeJS.ProcessEnv): Promise<string> {
-  if (env.PM_MCP_TOKEN && env.PM_MCP_TOKEN_FILE) {
-    throw new BridgeError('CONFIG_ERROR', 'Set PM_MCP_TOKEN or PM_MCP_TOKEN_FILE, not both.');
+  const token = mcpConfig(env, 'TOKEN'), tokenFile = mcpConfig(env, 'TOKEN_FILE');
+  if (token && tokenFile) {
+    throw new BridgeError('CONFIG_ERROR', 'Set MADDOTS_MCP_TOKEN or MADDOTS_MCP_TOKEN_FILE, not both.');
   }
-  if (env.PM_MCP_TOKEN) return validateToken(env.PM_MCP_TOKEN);
-  const path = env.PM_MCP_TOKEN_FILE;
-  if (!path) throw new BridgeError('CONFIG_ERROR', 'Set PM_MCP_TOKEN or PM_MCP_TOKEN_FILE to a user token created in MadDots.');
-  if (!isAbsolute(path)) throw new BridgeError('CONFIG_ERROR', 'PM_MCP_TOKEN_FILE must be an absolute path outside this repository.');
+  if (token) return validateToken(token);
+  const path = tokenFile;
+  if (!path) throw new BridgeError('CONFIG_ERROR', 'Set MADDOTS_MCP_TOKEN or MADDOTS_MCP_TOKEN_FILE to a user token created in MadDots.');
+  if (!isAbsolute(path)) throw new BridgeError('CONFIG_ERROR', 'MADDOTS_MCP_TOKEN_FILE must be an absolute path outside this repository.');
   let resolvedPath: string, packageRoots: string[];
+  const installRoot = mcpConfig(env, 'INSTALL_ROOT');
   try {
-    [resolvedPath, packageRoots] = await Promise.all([realpath(path), Promise.all([resolve(dirname(fileURLToPath(import.meta.url)), '..'), ...(env.PM_MCP_INSTALL_ROOT ? [env.PM_MCP_INSTALL_ROOT] : [])].map(root => realpath(root)))]);
+    [resolvedPath, packageRoots] = await Promise.all([realpath(path), Promise.all([resolve(dirname(fileURLToPath(import.meta.url)), '..'), ...(installRoot ? [installRoot] : [])].map(root => realpath(root)))]);
   } catch {
     throw new BridgeError('CONFIG_ERROR', 'Cannot read the token file. Check its location, ownership, permissions, and that it is not a symlink.');
   }
   for (const packageRoot of packageRoots) {
     const distance = relative(packageRoot, resolvedPath);
-    if (!distance || (!distance.startsWith(`..${sep}`) && !isAbsolute(distance))) throw new BridgeError('CONFIG_ERROR', 'PM_MCP_TOKEN_FILE must be an absolute path outside this repository.');
+    if (!distance || (!distance.startsWith(`..${sep}`) && !isAbsolute(distance))) throw new BridgeError('CONFIG_ERROR', 'MADDOTS_MCP_TOKEN_FILE must be an absolute path outside this repository.');
   }
   return validateToken(await readPrivateFile(path));
 }
@@ -57,7 +64,7 @@ export function supportsPrivateFiles(): boolean {
 
 export async function readPrivateFile(path: string): Promise<string> {
   if (!supportsPrivateFiles()) {
-    throw new BridgeError('CONFIG_ERROR', 'Secure token-file checks require a POSIX system. Use PM_MCP_TOKEN on this platform.');
+    throw new BridgeError('CONFIG_ERROR', 'Secure token-file checks require a POSIX system. Use MADDOTS_MCP_TOKEN on this platform.');
   }
   // Open first with no-follow, then validate the same descriptor that is read.
   // This avoids a check/read race and refuses a symlink as the token file.

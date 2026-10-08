@@ -1,36 +1,40 @@
 # Install the MadDots MCP client
 
+Version 0.6.2 uses the preferred `maddots-mcp` executable and source package name. The `ibl-projects-mcp` executable remains an alias for existing host commands. Prefer `MADDOTS_MCP_*` configuration variables; matching `PM_MCP_*` names remain supported, and the preferred spelling wins when both are set. Saved approvals remain in `~/.config/ibl-projects-mcp/` by default so existing connections survive the rename. Keep the same endpoint and credential directory. The signed runtime archive deliberately retains the legacy `ibl-projects-mcp` package identity so older verified updaters can accept this bridge release. The public repository, signing key and exact Sigstore workflow identity remain `sergiuliano/ibl-projects-mcp`; this compatibility channel will be retired only after a separately verified migration. No new npm registry package is published.
+
+If the installed bootstrap is older than 0.6.2, keep its `PM_MCP_*` settings until you manually install the 0.6.2 bootstrap and restart the host. A cached runtime update does not replace that bootstrap: its startup updater, `--status` and `--rollback` still read the legacy names. To introduce a branded setting during this transition, set both matching names to the same value, especially `PM_MCP_AUTO_UPDATE` / `MADDOTS_MCP_AUTO_UPDATE` and `PM_MCP_UPDATE_DIR` / `MADDOTS_MCP_UPDATE_DIR`. Remove the legacy spelling only after the installed executable reports 0.6.2 or newer with `--version`.
+
 Requirements: Node.js 22.22.2 or later in the Node 22 series, or Node.js 24.15.0 or later in the Node 24 series, npm and a MadDots account. Git is required for source signature verification and source installs. The optional artifact verification command uses GitHub CLI. The server operator deploys MCP and account pairing separately.
 
 ## Install the version-pinned bootstrap
 
-The client is distributed through [sergiuliano/ibl-projects-mcp releases](https://github.com/sergiuliano/ibl-projects-mcp/releases), with npm publication disabled. Use these commands only after `v0.6.1` and its `client-update.tgz` asset exist. Do not run `npm install ibl-projects-mcp` or `npx ibl-projects-mcp`, which would look for an unpublished registry package.
+The client is distributed through [sergiuliano/ibl-projects-mcp releases](https://github.com/sergiuliano/ibl-projects-mcp/releases), with npm publication disabled. Use these commands only after `v0.6.2` and its `client-update.tgz` asset exist. Do not run `npm install maddots-mcp` or `npx maddots-mcp`, which would look for an unpublished registry package.
 
 ```sh
-npm install --global --ignore-scripts https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.6.1/client-update.tgz
-ibl-projects-mcp --setup
+npm install --global --ignore-scripts https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.6.2/client-update.tgz
+maddots-mcp --setup
 ```
 
 A version-pinned npx invocation is also supported:
 
 ```sh
-npx --yes --ignore-scripts --package=https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.6.1/client-update.tgz ibl-projects-mcp --setup
+npx --yes --ignore-scripts --package=https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.6.2/client-update.tgz maddots-mcp --setup
 ```
 
 These direct URL commands trust the GitHub release distribution channel for the first bootstrap. To verify that archive against the trusted source tag and the release workflow before executing it, use [artifact verification](#verify-the-bootstrap-artifact), then install the verified local archive. Later automatic runtime downloads always require the fixed workflow's Sigstore attestation.
 
-When no valid credential exists, setup shows a browser link and an eight-character code. Open https://maddots.app/integrations, sign in to the intended MadDots account, enter the code and approve access within five minutes. Choose **All accessible workspaces** if you want access across your workspaces. A valid existing credential is verified and reused by `--setup` without another browser approval. Then configure your MCP host without `--setup`. For a global installation, use `ibl-projects-mcp` as the command. For npx:
+When no valid credential exists, setup shows a browser link and an eight-character code. Open https://maddots.app/integrations, sign in to the intended MadDots account, enter the code and approve access within five minutes. Choose **All accessible workspaces** if you want access across your workspaces. A valid existing credential is verified and reused by `--setup` without another browser approval. Then configure your MCP host without `--setup`. For a global installation, use `maddots-mcp` as the command. For npx:
 
 ```json
 {
   "mcpServers": {
-    "ibl-projects": {
+    "maddots": {
       "command": "npx",
       "args": [
         "--yes",
         "--ignore-scripts",
-        "--package=https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.6.1/client-update.tgz",
-        "ibl-projects-mcp"
+        "--package=https://github.com/sergiuliano/ibl-projects-mcp/releases/download/v0.6.2/client-update.tgz",
+        "maddots-mcp"
       ]
     }
   }
@@ -44,10 +48,10 @@ The bootstrap version stays pinned in this configuration while verified compatib
 First configure [release signing trust](#trust-the-release-signing-key), then verify the exact tag before installing dependencies:
 
 ```sh
-git clone --branch v0.6.1 --depth 1 https://github.com/sergiuliano/ibl-projects-mcp.git &&
+git clone --branch v0.6.2 --depth 1 https://github.com/sergiuliano/ibl-projects-mcp.git &&
 cd ibl-projects-mcp &&
 git config gpg.ssh.allowedSignersFile /ABSOLUTE/PATH/allowed_signers &&
-git verify-tag v0.6.1 &&
+git verify-tag v0.6.2 &&
 npm ci --ignore-scripts &&
 npm run build &&
 node dist/cli.js --setup
@@ -69,7 +73,7 @@ Configure this checkout to use the file:
 
 ```sh
 git config gpg.ssh.allowedSignersFile /ABSOLUTE/PATH/allowed_signers
-git verify-tag v0.6.1
+git verify-tag v0.6.2
 ```
 
 Continue only when Git reports a good signature for `sergiuliano` with the verified fingerprint. Do not trust every key in the downloaded list automatically. A changed signing key requires a new confirmation with the owner.
@@ -79,30 +83,30 @@ Continue only when Git reports a good signature for `sergiuliano` with the verif
 After cloning the pinned source tag and configuring the allowed-signers file above, verify the tag, download all three assets into a new empty directory, and verify the artifact against the exact signed source commit. The release workflow publishes the same archive under both its commit release and the signed version's bootstrap release.
 
 ```sh
-git verify-tag v0.6.1 &&
+git verify-tag v0.6.2 &&
 mkdir bootstrap-download &&
-gh release download v0.6.1 --repo sergiuliano/ibl-projects-mcp --dir bootstrap-download \
+gh release download v0.6.2 --repo sergiuliano/ibl-projects-mcp --dir bootstrap-download \
   --pattern client-update.tgz --pattern client-update.sigstore.json --pattern client-update.tgz.sha256 &&
 gh attestation verify bootstrap-download/client-update.tgz \
   --bundle bootstrap-download/client-update.sigstore.json \
   --repo sergiuliano/ibl-projects-mcp \
   --cert-identity 'https://github.com/sergiuliano/ibl-projects-mcp/.github/workflows/client-release.yml@refs/heads/main' \
   --cert-oidc-issuer https://token.actions.githubusercontent.com \
-  --source-ref refs/heads/main --source-digest "$(git rev-parse 'v0.6.1^{commit}')" \
-  --signer-digest "$(git rev-parse 'v0.6.1^{commit}')" --deny-self-hosted-runners &&
+  --source-ref refs/heads/main --source-digest "$(git rev-parse 'v0.6.2^{commit}')" \
+  --signer-digest "$(git rev-parse 'v0.6.2^{commit}')" --deny-self-hosted-runners &&
 npm install --global --ignore-scripts ./bootstrap-download/client-update.tgz
 ```
 
-Run `ibl-projects-mcp --setup` after this succeeds. The checksum is a convenience for transfer checks; the signed provenance binds the digest to the repository, workflow and source commit. GitHub documents [attestation verification](https://cli.github.com/manual/gh_attestation_verify).
+Run `maddots-mcp --setup` after this succeeds. The checksum is a convenience for transfer checks; the signed provenance binds the digest to the repository, workflow and source commit. GitHub documents [attestation verification](https://cli.github.com/manual/gh_attestation_verify).
 
 For a source installation, setup verifies authentication and matching hosted tool names and schemas without calling a project tool. Configure the host with an absolute path to the bootstrap:
 
 ```json
 {
   "mcpServers": {
-    "ibl-projects": {
+    "maddots": {
       "command": "node",
-      "args": ["/ABSOLUTE/PATH/ibl-projects-mcp/dist/cli.js"]
+      "args": ["/ABSOLUTE/PATH/maddots-mcp/dist/cli.js"]
     }
   }
 }
@@ -114,12 +118,12 @@ The terminal `--setup --reconnect` flag requires a 0.6.1 or newer bootstrap. An 
 
 ## Claude Code and separate host approvals
 
-The default credential directory is shared by endpoint, so two MCP hosts using the same directory and URL can reuse the same saved approval. For independent approvals, configure a separate absolute `PM_MCP_STATE_DIR` for each host. Existing configurations keep their current directory; installing or updating the client does not migrate their credentials.
+The default credential directory is shared by endpoint, so two MCP hosts using the same directory and URL can reuse the same saved approval. For independent approvals, configure a separate absolute `MADDOTS_MCP_STATE_DIR` for each host. Existing configurations keep their current directory; installing or updating the client does not migrate their credentials.
 
 For Claude Code with a stable source installation, register the server with its own credential directory:
 
 ```sh
-claude mcp add --env PM_MCP_STATE_DIR=/ABSOLUTE/PATH/maddots-claude-code \
+claude mcp add --env MADDOTS_MCP_STATE_DIR=/ABSOLUTE/PATH/maddots-claude-code \
   --transport stdio --scope user maddots \
   -- /ABSOLUTE/PATH/node /ABSOLUTE/PATH/maddots-mcp/dist/cli.js
 ```
@@ -129,14 +133,14 @@ Replace the paths with absolute paths for your credential directory, Node execut
 Use exactly the same credential directory for terminal setup:
 
 ```sh
-PM_MCP_STATE_DIR=/ABSOLUTE/PATH/maddots-claude-code \
+MADDOTS_MCP_STATE_DIR=/ABSOLUTE/PATH/maddots-claude-code \
   /ABSOLUTE/PATH/node /ABSOLUTE/PATH/maddots-mcp/dist/cli.js --setup
 ```
 
 To explicitly request a replacement browser approval, including broader workspace access:
 
 ```sh
-PM_MCP_STATE_DIR=/ABSOLUTE/PATH/maddots-claude-code \
+MADDOTS_MCP_STATE_DIR=/ABSOLUTE/PATH/maddots-claude-code \
   /ABSOLUTE/PATH/node /ABSOLUTE/PATH/maddots-mcp/dist/cli.js --setup --reconnect
 ```
 
@@ -174,7 +178,7 @@ Expired, declined, already claimed, or interrupted approvals stop polling and re
 
 On supported POSIX systems, the client saves its approved credential automatically under `~/.config/ibl-projects-mcp/`. The filename is a SHA-256 hash of the exact configured MCP URL. The directory must be owned by your user with permissions `0700` and have no symlink path components. Credential files must be regular files owned by your user with permissions `0600`; symlinks are rejected. Credentials are bound to the exact endpoint and are not reused at another URL.
 
-Set `PM_MCP_STATE_DIR` to an absolute private directory outside this checkout if you need a different location. Separate per-host directories are recommended when each host should receive its own approval. Hosts using the default directory share the saved credential for the same exact endpoint; no automatic migration changes existing configurations. Protect that directory and its backups. Tokens and polling secrets are never printed in setup output, tool results, or error messages. The client does not access OS Keychain or a password manager.
+Set `MADDOTS_MCP_STATE_DIR` to an absolute private directory outside this checkout if you need a different location. Separate per-host directories are recommended when each host should receive its own approval. Hosts using the default directory share the saved credential for the same exact endpoint; no automatic migration changes existing configurations. Protect that directory and its backups. Tokens and polling secrets are never printed in setup output, tool results, or error messages. The client does not access OS Keychain or a password manager.
 
 If the platform cannot enforce the required POSIX file checks, or a credential cannot be saved safely, an approved connection remains usable in memory for the current session. The connection status reports that it was not remembered. In that case, use pairing within the running MCP host and approve a new code after restarting it; a separate `--setup` process cannot pass its in-memory login to another process. Do not weaken file permissions to enable persistence.
 
@@ -182,32 +186,32 @@ An explicit reconnect, through `connect_account` or `--setup --reconnect`, prese
 
 ## Advanced: existing bearer tokens
 
-`PM_MCP_TOKEN` or `PM_MCP_TOKEN_FILE` can supply a user-issued token instead of browser pairing. Configure only one. Environment credentials take precedence over saved paired credentials and are not copied into the credential store. To use a newly paired account on subsequent launches, remove the manual token configuration.
+`MADDOTS_MCP_TOKEN` or `MADDOTS_MCP_TOKEN_FILE` can supply a user-issued token instead of browser pairing. Configure only one. Environment credentials take precedence over saved paired credentials and are not copied into the credential store. To use a newly paired account on subsequent launches, remove the manual token configuration.
 
-A POSIX token file must be a regular file owned by the current user with permissions `0600`. The file must not be a symlink. `PM_MCP_TOKEN_FILE` must be an absolute path outside this checkout. On platforms without the required file checks, use the host's supported secret environment mechanism for `PM_MCP_TOKEN`.
+A POSIX token file must be a regular file owned by the current user with permissions `0600`. The file must not be a symlink. `MADDOTS_MCP_TOKEN_FILE` must be an absolute path outside this checkout. On platforms without the required file checks, use the host's supported secret environment mechanism for `MADDOTS_MCP_TOKEN`.
 
 Do not put a token in command-line arguments, a URL, or a committed host configuration. Existing bearer tokens can be verified with `node dist/cli.js --setup` without starting a new pairing.
 
 ## Endpoint and local development
 
-`PM_MCP_URL` defaults to `https://maddots.app/mcp`. Overrides require HTTPS without a username, password, query, or fragment. Pairing uses `/api/mcp/pairings` and `/api/mcp/pairings/poll` on the same origin; approval links must point to that origin's `/integrations` page. The client refuses redirects so neither the bearer token nor polling secret can follow a redirected request.
+`MADDOTS_MCP_URL` defaults to `https://maddots.app/mcp`. Overrides require HTTPS without a username, password, query, or fragment. Pairing uses `/api/mcp/pairings` and `/api/mcp/pairings/poll` on the same origin; approval links must point to that origin's `/integrations` page. The client refuses redirects so neither the bearer token nor polling secret can follow a redirected request.
 
-An explicit local endpoint such as `http://127.0.0.1:PORT/mcp` also requires `PM_MCP_ALLOW_INSECURE_LOOPBACK=1`. HTTP to remote hosts remains rejected. Use synthetic credentials, a temporary `PM_MCP_STATE_DIR`, and an isolated database for development.
+An explicit local endpoint such as `http://127.0.0.1:PORT/mcp` also requires `MADDOTS_MCP_ALLOW_INSECURE_LOOPBACK=1`. HTTP to remote hosts remains rejected. Use synthetic credentials, a temporary `MADDOTS_MCP_STATE_DIR`, and an isolated database for development.
 
 ## One-time migration from 0.4.x
 
 Clients released before 0.5.1 cannot install the new supervisor automatically. Stop the host's MCP connection, update the bootstrap once, then restart the connection. For a source checkout, preserve the existing directory and verify the exact signed tag before changing it:
 
 ```sh
-git fetch origin tag v0.6.1 &&
-git verify-tag v0.6.1 &&
-git checkout --detach v0.6.1 &&
+git fetch origin tag v0.6.2 &&
+git verify-tag v0.6.2 &&
+git checkout --detach v0.6.2 &&
 npm ci --ignore-scripts &&
 npm run build &&
 node dist/cli.js --setup
 ```
 
-For npm or npx, install the versioned GitHub release archive above and update the host command to that bootstrap. Preserve `PM_MCP_URL`, `PM_MCP_STATE_DIR`, environment token settings and the saved credential directory. A valid existing authorization is reused; do not pair again solely for an update or a schema mismatch. Do not copy credentials to a different endpoint.
+For npm or npx, install the versioned GitHub release archive above and update the host command to that bootstrap. Preserve `MADDOTS_MCP_URL`, `MADDOTS_MCP_STATE_DIR`, environment token settings and the saved credential directory. A valid existing authorization is reused; do not pair again solely for an update or a schema mismatch. Do not copy credentials to a different endpoint.
 
 ## Automatic runtime updates
 
@@ -227,9 +231,9 @@ node dist/cli.js --update
 node dist/cli.js --rollback
 ```
 
-For npm or npx installations, pass the same flags to `ibl-projects-mcp`. `--status` reports the installed bootstrap, runtime selected for the next launch, last check and failure reason. For the running host connection, `connect_account` with `action: "status"` also reports its active runtime, pending release and any reconnect requirement. `--update` explicitly checks for a verified update even when automatic checks are disabled. `--rollback` selects the previous verified runtime, or the bundled bootstrap when no previous cached release is available. Reconnect the host afterward so it uses that runtime. The rejected release is skipped by automatic checks until an explicit `--update` retries it. Rollback never downloads an arbitrary older package.
+For npm or npx installations, pass the same flags to `maddots-mcp`. `--status` reports the installed bootstrap, runtime selected for the next launch, last check and failure reason. For the running host connection, `connect_account` with `action: "status"` also reports its active runtime, pending release and any reconnect requirement. `--update` explicitly checks for a verified update even when automatic checks are disabled. `--rollback` selects the previous verified runtime, or the bundled bootstrap when no previous cached release is available. Reconnect the host afterward so it uses that runtime. The rejected release is skipped by automatic checks until an explicit `--update` retries it. Rollback never downloads an arbitrary older package.
 
-Set `PM_MCP_AUTO_UPDATE=0` in the MCP host environment to disable automatic checks. This keeps using an already selected verified cached runtime; it does not force a downgrade to the bootstrap. The default update cache is `~/.cache/maddots-mcp/updates/`. Set `PM_MCP_UPDATE_DIR` to an absolute private directory outside the checkout to override it. Keep it separate from `PM_MCP_STATE_DIR`, which stores credentials. Unsafe cache permissions, a symlinked cache directory or aliases overlapping protected locations fail closed. Do not delete credential state when troubleshooting a runtime update.
+With a 0.6.2 or newer installed bootstrap, set `MADDOTS_MCP_AUTO_UPDATE=0` in the MCP host environment to disable automatic checks. Older bootstraps must keep `PM_MCP_AUTO_UPDATE=0` until a manual bootstrap upgrade. This keeps using an already selected verified cached runtime; it does not force a downgrade to the bootstrap. The default update cache is `~/.cache/maddots-mcp/updates/`. With a 0.6.2 or newer bootstrap, set `MADDOTS_MCP_UPDATE_DIR` to an absolute private directory outside the checkout to override it. Older bootstraps must keep `PM_MCP_UPDATE_DIR`, or set both aliases to the same directory during migration. Keep it separate from `MADDOTS_MCP_STATE_DIR`, which stores credentials. Unsafe cache permissions, a symlinked cache directory or aliases overlapping protected locations fail closed. Do not delete credential state when troubleshooting a runtime update.
 
 Hosted Streamable HTTP users consume the deployed server directly and do not run this updater. Host-managed plugins are updated by their host. This guide describes the local Node.js stdio client and does not establish compatibility with any particular host product.
 
@@ -261,4 +265,4 @@ Moving from an older runtime to 0.6.0 changes its initial capabilities and instr
 
 Choose **All accessible workspaces** in the browser to approve a broad connection. Legacy credentials cover every project you can access in the workspace selected when you approved the connection, including projects shared with you later in that workspace. They keep the restricted catalog until explicit reapproval.
 
-If the host sets `PM_MCP_TOKEN` or `PM_MCP_TOKEN_FILE`, that configuration takes precedence over saved pairing after a fresh launch. A successful reconnect uses the replacement in the current session and reports this override in its status. Remove or update the host environment through its configuration before restarting to retain the replacement account. Never copy secret values into chat.
+If the host sets `MADDOTS_MCP_TOKEN` or `MADDOTS_MCP_TOKEN_FILE`, that configuration takes precedence over saved pairing after a fresh launch. A successful reconnect uses the replacement in the current session and reports this override in its status. Remove or update the host environment through its configuration before restarting to retain the replacement account. Never copy secret values into chat.

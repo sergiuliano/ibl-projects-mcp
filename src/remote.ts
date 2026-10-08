@@ -57,7 +57,7 @@ export class RemoteService {
   async initialize(credential?: string): Promise<WorkspaceAccess> {
     const url = endpoint(this.env);
     const token = credential ?? await accessToken(this.env);
-    const client = new Client({ name: 'ibl-projects-mcp-bridge', version: MCP_VERSION });
+    const client = new Client({ name: 'maddots-mcp-bridge', version: MCP_VERSION });
     this.client = client;
     try {
       await client.connect(new StreamableHTTPClientTransport(url, {

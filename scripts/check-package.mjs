@@ -7,10 +7,12 @@ import { fileURLToPath } from 'node:url';
 import process from 'node:process';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const cache = await mkdtemp(join(tmpdir(), 'ibl-projects-pack-'));
+const cache = await mkdtemp(join(tmpdir(), 'maddots-pack-'));
 const modules = new Set(['contract', 'server', 'remote', 'cli', 'config', 'account', 'credentials', 'pairing', 'runtime', 'worker', 'supervisor', 'updater', 'npm']);
 try {
   const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
+  assert.equal(pkg.name, 'maddots-mcp');
+  assert.deepEqual(pkg.bin, { 'maddots-mcp': 'dist/cli.js', 'ibl-projects-mcp': 'dist/cli.js' });
   assert.equal(pkg.private, true, 'npm publication must remain disabled.');
   const packed = JSON.parse(execFileSync('npm', ['pack', '--dry-run', '--json', '--ignore-scripts', '--cache', cache], {
     cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000,

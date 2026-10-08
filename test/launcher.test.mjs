@@ -14,7 +14,7 @@ import { CredentialStore } from '../dist/credentials.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const run = promisify(execFile);
-const cleanEnv = () => ({ ...Object.fromEntries(Object.entries(process.env).filter(([key, value]) => !key.startsWith('PM_MCP_') && typeof value === 'string')), PM_MCP_AUTO_UPDATE: '0' });
+const cleanEnv = () => ({ ...Object.fromEntries(Object.entries(process.env).filter(([key, value]) => !key.startsWith('PM_MCP_') && !key.startsWith('MADDOTS_MCP_') && typeof value === 'string')), PM_MCP_AUTO_UPDATE: '0' });
 const options = { repository: 'sergiuliano/ibl-projects-mcp', version: '1', bundledRoot: '/fixture/bootstrap', env: {} };
 async function directory(t) { const value = await realpath(await mkdtemp(join(tmpdir(), 'maddots-launcher-'))); t.after(() => rm(value, { recursive: true, force: true })); return value; }
 

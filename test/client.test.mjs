@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, URL } from 'node:url';
 import { Buffer } from 'node:buffer';
 import process from 'node:process';
 import test from 'node:test';
@@ -18,14 +18,15 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import { MCP_VERSION, OPERATIONS, TOOL_DEFINITIONS } from '../dist/contract.js';
 import { createMcpServer } from '../dist/server.js';
 import { AccountService } from '../dist/account.js';
-import { accessToken, endpoint } from '../dist/config.js';
+import { accessToken, endpoint, mcpConfig } from '../dist/config.js';
+import { CredentialStore } from '../dist/credentials.js';
 import { RemoteService, verifyCatalog } from '../dist/remote.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const run = promisify(execFile);
 const syntheticToken = 'pm_test_only_not_a_real_credential_123456789';
 const cli = join(root, 'dist/cli.js');
-const cleanEnv = () => ({ ...Object.fromEntries(Object.entries(process.env).filter(([key, value]) => !key.startsWith('PM_MCP_') && typeof value === 'string')), PM_MCP_AUTO_UPDATE: '0' });
+const cleanEnv = () => ({ ...Object.fromEntries(Object.entries(process.env).filter(([key, value]) => !key.startsWith('PM_MCP_') && !key.startsWith('MADDOTS_MCP_') && typeof value === 'string')), PM_MCP_AUTO_UPDATE: '0' });
 
 async function fixture(t, { catalog = TOOL_DEFINITIONS, disconnect = false, redirectTo, toolResult, getRedirectTo } = {}) {
   const calls = [];
@@ -205,6 +206,7 @@ test('stdio discovery adds only the local account tool and stdout remains protoc
   transport.stderr?.on('data', chunk => { stderr += chunk.toString(); });
   t.after(() => client.close());
   await client.connect(transport);
+  assert.equal(client.getServerVersion().name, 'maddots-mcp');
   const listed = await client.listTools();
   assert.deepEqual(listed.tools.map(tool => tool.name).sort(), [...TOOL_DEFINITIONS.map(tool => tool.name), 'connect_account'].sort());
   assert.equal(server.calls.length, 0);
@@ -304,7 +306,8 @@ test('help and version do not need credentials and unknown arguments fail withou
   const version = await run(process.execPath, [cli, '--version'], { env });
   assert.equal(version.stdout.trim(), MCP_VERSION);
   const help = await run(process.execPath, [cli, '--help'], { env });
-  assert.match(help.stdout, /PM_MCP_TOKEN_FILE/);
+  assert.match(help.stdout, /MADDOTS_MCP_TOKEN_FILE/);
+  assert.match(help.stdout, /Legacy PM_MCP_\*/);
   await assert.rejects(run(process.execPath, [cli, '--token=' + syntheticToken], { env }), error => {
     assert.ok(!error.stderr.includes(syntheticToken));
     assert.equal(error.stdout, '');
@@ -360,4 +363,35 @@ test('only exact scoped and all-workspace catalogs are supported, never hybrid c
   const args = { workspaceId: '11111111-1111-4111-8111-111111111111' };
   await remote.callTool('list_projects', args);
   assert.deepEqual(hosted.calls, [{ name: 'list_workspaces', arguments: {} }, { name: 'list_projects', arguments: args }]);
+});
+
+
+test('MadDots configuration wins over legacy aliases without moving default saved credentials', async t => {
+  assert.equal(endpoint({ PM_MCP_URL: 'https://legacy.example.test/mcp', MADDOTS_MCP_URL: 'https://preferred.example.test/mcp' }).href, 'https://preferred.example.test/mcp');
+  assert.equal(mcpConfig({ MADDOTS_MCP_AUTO_UPDATE: '0', PM_MCP_AUTO_UPDATE: '1' }, 'AUTO_UPDATE'), '0');
+  assert.equal(await accessToken({ MADDOTS_MCP_TOKEN: syntheticToken, PM_MCP_TOKEN: 'invalid' }), syntheticToken);
+  await assert.rejects(accessToken({ MADDOTS_MCP_TOKEN: syntheticToken, PM_MCP_TOKEN_FILE: '/fixture/token' }), /not both/);
+  assert.equal(endpoint({ MADDOTS_MCP_URL: 'http://127.0.0.1:1234/mcp', MADDOTS_MCP_ALLOW_INSECURE_LOOPBACK: '1' }).protocol, 'http:');
+  const url = new URL('https://maddots.app/mcp');
+  const defaultStore = new CredentialStore(url, {});
+  assert.ok(defaultStore.directory.endsWith('/.config/ibl-projects-mcp'));
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'maddots-branding-')));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const legacy = new CredentialStore(url, { PM_MCP_STATE_DIR: directory });
+  const preferred = new CredentialStore(url, { PM_MCP_STATE_DIR: '/unused/legacy', MADDOTS_MCP_STATE_DIR: directory });
+  assert.equal(preferred.path, legacy.path);
+  const credential = { endpoint: url.href, secret: syntheticToken, account: { id: 'fixture-account', name: 'Fixture' }, scopes: ['kanban:read'], expiresAt: new Date(Date.now() + 3600000).toISOString() };
+  assert.equal((await legacy.save(credential)).persisted, true);
+  assert.deepEqual(await preferred.load(), credential);
+});
+
+test('branded host variables initialize and read through the real stdio bridge', async t => {
+  const hosted = await fixture(t);
+  const env = Object.fromEntries(Object.entries(hosted.env).map(([key, value]) => [key.startsWith('PM_MCP_') ? key.replace('PM_MCP_', 'MADDOTS_MCP_') : key, value]));
+  const client = new Client({ name: 'branded-host-test', version: '1' });
+  t.after(() => client.close());
+  await client.connect(new StdioClientTransport({ command: process.execPath, args: [cli], env, stderr: 'pipe' }));
+  assert.equal(client.getServerVersion().name, 'maddots-mcp');
+  await client.callTool({ name: 'list_projects', arguments: {} });
+  assert.deepEqual(hosted.calls, [{ name: 'list_projects', arguments: {} }]);
 });

@@ -13,9 +13,9 @@ async function fixture() {
   await mkdir(join(directory, 'dist'));
   await copyFile(new URL('../scripts/prepare-release.mjs', import.meta.url), join(directory, 'scripts/prepare-release.mjs'));
   const pkg = {
-    name: 'ibl-projects-mcp', version: '0.5.0', private: true, license: 'MIT', type: 'module',
+    name: 'maddots-mcp', version: '0.5.0', private: true, license: 'MIT', type: 'module',
     description: 'Synthetic release fixture', engines: { node: '>=22' },
-    bin: { 'ibl-projects-mcp': 'dist/cli.js' },
+    bin: { 'maddots-mcp': 'dist/cli.js', 'ibl-projects-mcp': 'dist/cli.js' },
     repository: { type: 'git', url: 'git+https://github.com/sergiuliano/ibl-projects-mcp.git' },
     maddotsMcp: { supervisorVersion: 1, workerProtocol: 1 }, dependencies: {},
     scripts: { install: 'node -e "process.exit(81)"', prepack: 'node -e "process.exit(82)"' },
@@ -31,6 +31,9 @@ async function fixture() {
   await writeFile(join(directory, 'dist/cli.js'), `#!/usr/bin/env node
 import assert from 'node:assert/strict';
 assert.equal(process.env.PM_MCP_AUTO_UPDATE, '0');
+assert.equal(process.env.MADDOTS_MCP_AUTO_UPDATE, '0');
+assert.equal(process.env.MADDOTS_MCP_TOKEN, undefined);
+assert.equal(process.env.MADDOTS_MCP_TOKEN_FILE, undefined);
 assert.equal(process.env.PM_MCP_TOKEN, undefined);
 assert.equal(process.env.PM_MCP_TOKEN_FILE, undefined);
 if (process.argv[2] === '--version') process.stdout.write('0.5.0\\n');
@@ -42,7 +45,7 @@ else process.exit(83);
 function prepare(fixture, output = 'release') {
   return spawnSync(process.execPath, [join(fixture.directory, 'scripts/prepare-release.mjs'), '--output', join(fixture.directory, output)], {
     cwd: fixture.directory, encoding: 'utf8', timeout: 30_000,
-    env: { ...process.env, PM_MCP_TOKEN: 'synthetic-fixture-only', PM_MCP_TOKEN_FILE: join(fixture.directory, 'unused-token'), npm_config_offline: 'true' },
+    env: { ...process.env, MADDOTS_MCP_TOKEN: 'synthetic-brand-fixture-only', MADDOTS_MCP_TOKEN_FILE: join(fixture.directory, 'unused-branded-token'), PM_MCP_TOKEN: 'synthetic-fixture-only', PM_MCP_TOKEN_FILE: join(fixture.directory, 'unused-token'), npm_config_offline: 'true' },
   });
 }
 
@@ -61,6 +64,13 @@ test('release packs only runtime files, removes scripts and clean-installs the e
     assert.ok(entries.includes('package/dist/cli.js'));
     assert.ok(!entries.some(name => /private-source|\.env|node_modules|scripts|package-lock/.test(name)));
     const packed = JSON.parse(execFileSync('tar', ['-xOzf', artifact, 'package/package.json'], { encoding: 'utf8' }));
+    assert.equal(result.sourcePackage, 'maddots-mcp');
+    assert.equal(result.package, 'ibl-projects-mcp');
+    assert.equal(packed.name, 'ibl-projects-mcp');
+    assert.deepEqual(packed.bin, { 'maddots-mcp': 'dist/cli.js', 'ibl-projects-mcp': 'dist/cli.js' });
+    const shrinkwrap = JSON.parse(execFileSync('tar', ['-xOzf', artifact, 'package/npm-shrinkwrap.json'], { encoding: 'utf8' }));
+    assert.equal(shrinkwrap.name, packed.name);
+    assert.equal(shrinkwrap.packages[''].name, packed.name);
     assert.equal(packed.private, true);
     assert.equal(packed.scripts, undefined);
     assert.equal(packed.devDependencies, undefined);

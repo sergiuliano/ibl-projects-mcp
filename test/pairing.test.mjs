@@ -28,7 +28,7 @@ const secret = 'pm_test_only_pairing_secret_123456789';
 const deviceCode = 'd'.repeat(43);
 const userCode = 'ABCD2345';
 const scopes = ['kanban:read', 'kanban:write'];
-const cleanEnv = () => ({ ...Object.fromEntries(Object.entries(process.env).filter(([key, value]) => !key.startsWith('PM_MCP_') && typeof value === 'string')), PM_MCP_AUTO_UPDATE: '0' });
+const cleanEnv = () => ({ ...Object.fromEntries(Object.entries(process.env).filter(([key, value]) => !key.startsWith('PM_MCP_') && !key.startsWith('MADDOTS_MCP_') && typeof value === 'string')), PM_MCP_AUTO_UPDATE: '0' });
 const credential = (endpoint = url, name = 'Fixture User') => ({ endpoint: endpoint.href, secret, account: { id: 'fixture-account', name }, scopes, expiresAt: new Date(Date.now() + 86_400_000).toISOString() });
 const response = (data, status = 200, headers = {}) => new globalThis.Response(JSON.stringify({ data }), { status, headers });
 const issue = (now, endpoint = url) => ({ deviceCode, userCode, expiresAt: new Date(now + 300_000).toISOString(), expiresIn: 300, interval: 3, verificationUri: new URL('/integrations', endpoint.origin).href });
