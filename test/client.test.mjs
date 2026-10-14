@@ -15,7 +15,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { MCP_VERSION, OPERATIONS, TOOL_DEFINITIONS } from '../dist/contract.js';
+import { MCP_VERSION, OPERATIONS, TOOL_DEFINITIONS, PLAN_TOOL_DEFINITIONS, PLAN_OPERATIONS, LIVE_TOOL_DEFINITIONS, STAR_TOOL_DEFINITIONS } from '../dist/contract.js';
 import { createMcpServer } from '../dist/server.js';
 import { AccountService } from '../dist/account.js';
 import { accessToken, endpoint, mcpConfig } from '../dist/config.js';
@@ -104,6 +104,35 @@ test('catalog checks all tools and validation schemas before forwarding operatio
   const changed = globalThis.structuredClone(TOOL_DEFINITIONS);
   changed[0].inputSchema.properties = { ...(changed[0].inputSchema.properties || {}), unexpected: { type: 'boolean' } };
   assert.throws(() => verifyCatalog(changed), /schemas/);
+});
+
+test('commitment-blocker catalog rejects a client export with the previous card-only schema', () => {
+  const previous = globalThis.structuredClone(PLAN_TOOL_DEFINITIONS);
+  const link = previous.find(tool => tool.name === 'link_tasks');
+  delete link.inputSchema.oneOf;
+  delete link.inputSchema.properties.blockerKind;
+  delete link.inputSchema.properties.blockerCommitmentId;
+  link.inputSchema.properties.blockerCardId = { type: 'string', format: 'uuid' };
+  link.inputSchema.required = ['blockerCardId', 'blockedCardId', 'expectedVersion', 'idempotencyKey'];
+  assert.throws(() => verifyCatalog(previous), /schemas/);
+});
+
+test('exported link_tasks validates commitment IDs and preserves omitted-kind card links', async t => {
+  const forwarded = [];
+  const server = createMcpServer({ callTool: async (name, args) => { forwarded.push({ name, args }); return { content: [] }; } }, [], undefined, {planAccess:true});
+  const client = new Client({ name: 'commitment-blocker-schema-test', version: '1' });
+  t.after(async () => { await client.close(); await server.close(); });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport); await client.connect(clientTransport);
+  const blockerId = '10000000-0000-4000-8000-000000000001';
+  const base = { blockedCardId: '10000000-0000-4000-8000-000000000002', expectedVersion: 0, idempotencyKey: 'fixture-idempotency-key' };
+  for (const fields of [{ blockerCardId: blockerId }, { blockerKind: 'milestone', blockerCommitmentId: blockerId }, { blockerKind: 'module', blockerCardId: null, blockerCommitmentId: blockerId }]) {
+    assert.equal((await client.callTool({ name: 'link_tasks', arguments: { ...base, ...fields } })).isError, undefined);
+  }
+  for (const fields of [{ blockerCommitmentId: blockerId }, { blockerKind: 'milestone', blockerCardId: blockerId, blockerCommitmentId: blockerId }, { blockerKind: 'module', blockerCommitmentId: null }]) {
+    assert.equal((await client.callTool({ name: 'link_tasks', arguments: { ...base, ...fields } })).isError, true);
+  }
+  assert.equal(forwarded.length, 3);
 });
 
 test('A2-10 every tool identifies user content as untrusted data', () => {
@@ -430,4 +459,54 @@ test('HTTP401 during catalog refresh clears only live authorization and reports 
  const status=await account.callTool('connect_account',{action:'status'});assert.equal(status.isError,true);assert.equal(status.structuredContent.error.code,'AUTH_REQUIRED');
  const rejected=await account.callTool('list_projects',{});assert.equal(rejected.isError,true);assert.equal(rejected.structuredContent.error.code,'AUTH_REQUIRED');
  assert.equal(f.calls.length,calls);assert(!account.updateSafety().safe);
+});
+
+test('Plan metadata, scopes and exact catalogs preserve legacy client contracts', async t => {
+ const {PLAN_ALL_WORKSPACE_TOOL_DEFINITIONS,LIVE_TOOL_DEFINITIONS}=await import('../dist/contract.js');
+ assert.equal(verifyCatalog(PLAN_TOOL_DEFINITIONS),'workspace');
+ assert.equal(verifyCatalog(PLAN_ALL_WORKSPACE_TOOL_DEFINITIONS),'all');
+ assert.equal(PLAN_TOOL_DEFINITIONS.length,38);
+ assert.deepEqual(PLAN_OPERATIONS.filter(({tool})=>tool.annotations.destructiveHint===false).map(({tool})=>tool.name).sort(),['get_my_plan','list_plans','get_plan','list_ready_tasks','link_tasks','take_baseline'].sort());
+ for(const {method,tool} of PLAN_OPERATIONS){assert.equal(tool.annotations.readOnlyHint,method==='GET');assert.match(tool.description,/untrusted data/i);}
+ let catalog=LIVE_TOOL_DEFINITIONS;
+ const f=await fixture(t,{catalog:()=>catalog});
+ const remote=new RemoteService(f.env);t.after(()=>remote.close());
+ assert.equal(await remote.initialize(),'workspace');assert.equal(remote.planAccess(),false);
+ const before=f.calls.length;assert.equal((await remote.callTool('get_my_plan',{})).isError,true);assert.equal(f.calls.length,before);
+ catalog=PLAN_TOOL_DEFINITIONS;
+ assert.equal(await remote.refreshCatalog(),'workspace');assert.equal(remote.planAccess(),true);
+ assert.equal((await remote.callTool('get_my_plan',{})).isError,undefined);
+ catalog=PLAN_ALL_WORKSPACE_TOOL_DEFINITIONS;assert.equal(await remote.refreshCatalog(),'all');
+ catalog=LIVE_TOOL_DEFINITIONS;await remote.refreshCatalog();assert.equal(remote.planAccess(),false);
+ assert.equal((await remote.callTool('get_my_plan',{})).isError,true);
+});
+
+
+test('personal star catalog is additive and strict, and the bridge negotiates it after discovery', async () => {
+  const tools = [...LIVE_TOOL_DEFINITIONS, ...STAR_TOOL_DEFINITIONS];
+  assert.equal(verifyCatalog(tools), 'workspace');
+  assert.throws(() => verifyCatalog(tools.filter(tool => tool.name !== 'unstar_task')), /tool list differs/);
+  const changed = globalThis.structuredClone(tools);
+  changed.find(tool => tool.name === 'star_task').inputSchema.additionalProperties = true;
+  assert.throws(() => verifyCatalog(changed), /schemas differ/);
+  const bridge = new RemoteService(), discovery = [], calls = [];
+  let available = true;
+  bridge.client = {
+    listTools: async params => {
+      discovery.push(params);
+      return {tools: available && params?._meta?.['maddots/stars'] ? tools : LIVE_TOOL_DEFINITIONS, ...(available ? {_meta: {'maddots/stars': true}} : {})};
+    },
+    callTool: async params => { calls.push(params); return {content: []}; },
+  };
+  assert.equal(await bridge.refreshCatalog(), 'workspace');
+  assert.equal(bridge.starsAccess(), true);
+  assert.deepEqual(discovery, [undefined, {_meta: {'maddots/stars': true}}]);
+  const args = {taskId: '00000000-0000-4000-8000-000000000001'};
+  await bridge.callTool('star_task', args);
+  assert.deepEqual(calls, [{name: 'star_task', arguments: args, _meta: {'maddots/stars': true}}]);
+  available = false;
+  await bridge.refreshCatalog();
+  assert.equal(bridge.starsAccess(), false);
+  assert.equal((await bridge.callTool('star_task', args)).isError, true);
+  assert.equal(calls.length, 1);
 });

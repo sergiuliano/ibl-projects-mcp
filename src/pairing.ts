@@ -1,6 +1,16 @@
 import { BridgeError } from './config.js';
 import { parseCredential, type Credential, type Scope } from './credentials.js';
 
+// Kept in sync with shared/ai-harness.ts by the pairing API test; this client exports standalone.
+export const AI_HARNESSES = ['codex', 'claude-code', 'claude-app', 'cursor', 'copilot', 'devin', 'cline', 'continue', 'gemini-cli', 'antigravity', 'opencode', 'oh-my-pi', 'openclaw', 'hermes-agent', 'grok-cli', 'chatgpt', 'other'] as const;
+export type AiHarness = typeof AI_HARNESSES[number];
+export function pairingHarness(env: NodeJS.ProcessEnv, override?: string): AiHarness | undefined {
+  const value = override ?? env.MADDOTS_MCP_HARNESS;
+  if (value === undefined || value === '') return undefined;
+  if (!AI_HARNESSES.includes(value as AiHarness)) throw new BridgeError('CONFIG_ERROR', 'Use a supported AI tool key for --harness or MADDOTS_MCP_HARNESS.');
+  return value as AiHarness;
+}
+
 export type PendingPairing = { status: 'pending'; userCode: string; verificationUri: string; expiresAt: string; expiresIn: number; scopes: Scope[] };
 type Timing = { now: () => number; sleep: (ms: number, signal: AbortSignal) => Promise<void> };
 const clock: Timing = {
@@ -45,7 +55,7 @@ export class PairingFlow {
   private readonly controller = new AbortController();
   private completion?: Promise<Credential>;
   private pending?: PendingPairing;
-  constructor(private readonly endpoint: URL, private readonly timing: Timing = clock, private readonly request: typeof fetch = fetch) {}
+  constructor(private readonly endpoint: URL, private readonly timing: Timing = clock, private readonly request: typeof fetch = fetch, private readonly harness?: AiHarness) {}
   cancel(): void { this.controller.abort(); }
   snapshot(): PendingPairing | undefined { return this.pending && { ...this.pending, scopes: [...this.pending.scopes] }; }
   private async post(path: string, body: object, deadline?: number): Promise<Response> {
@@ -64,7 +74,7 @@ export class PairingFlow {
   }
   async start(scopes: Scope[]): Promise<PendingPairing> {
     if (this.pending || this.completion) throw new BridgeError('PAIRING_IN_PROGRESS', 'This account connection has already started.');
-    const response = await this.post('/api/mcp/pairings', { clientName: 'MadDots MCP', scopes, workspaceAccess: 'all' });
+    const response = await this.post('/api/mcp/pairings', { clientName: 'MadDots MCP', scopes, workspaceAccess: 'all', ...(this.harness ? { harness: this.harness } : {}) });
     if (!response.ok) { await response.body?.cancel(); throw new BridgeError('PAIRING_UNAVAILABLE', 'Cannot start account connection. Check service availability and request a new code explicitly.'); }
     const data = await boundedJson(response);
     const now = this.timing.now();

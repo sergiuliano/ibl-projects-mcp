@@ -25,7 +25,7 @@ async function fixture() {
   await writeFile(join(directory, 'LICENSE'), 'Synthetic MIT license fixture\n');
   await writeFile(join(directory, '.env'), 'SYNTHETIC_SECRET=not-for-distribution\n');
   await writeFile(join(directory, 'private-source.ts'), 'export const privateFixture = true;\n');
-  for (const name of ['contract', 'server', 'remote', 'config', 'account', 'credentials', 'pairing', 'runtime', 'worker', 'supervisor', 'updater', 'npm']) {
+  for (const name of ['contract', 'server', 'remote', 'config', 'account', 'credentials', 'pairing', 'harness', 'runtime', 'worker', 'supervisor', 'updater', 'npm']) {
     await writeFile(join(directory, 'dist', name + '.js'), 'export {};\n');
   }
   await writeFile(join(directory, 'dist/cli.js'), `#!/usr/bin/env node

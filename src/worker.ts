@@ -47,7 +47,7 @@ export async function runWorker(): Promise<void> {
       return true;
     },
   });
-  const server = createMcpServer(account, [CONNECT_ACCOUNT_TOOL], undefined, { workspaceAccess: () => account.workspaceAccess(), liveAccess: () => account.liveAccess() });
+  const server = createMcpServer(account, [CONNECT_ACCOUNT_TOOL], undefined, { workspaceAccess: () => account.workspaceAccess(), liveAccess: () => account.liveAccess(), planAccess: () => account.planAccess(), starsAccess: () => account.starsAccess() });
   // These methods exist only between the local supervisor and its child. They
   // are not tools and the supervisor never forwards them from the MCP host.
   server.fallbackRequestHandler = async request => {
@@ -57,6 +57,7 @@ export async function runWorker(): Promise<void> {
     };
     if (request.method === 'maddots/host') {
       hostElicitation = request.params?.elicitation === true;
+      account.setHostClientName(request.params?.clientName);
       return {};
     }
     throw new McpError(ErrorCode.MethodNotFound, 'Unknown method');

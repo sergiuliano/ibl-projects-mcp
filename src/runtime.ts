@@ -25,6 +25,8 @@ export async function run(args: string[], context: RuntimeContext): Promise<void
     return;
   }
   if (args.includes('--setup')) {
+    const harnessIndex = args.indexOf('--harness');
+    if (harnessIndex !== -1) env.MADDOTS_MCP_HARNESS = args[harnessIndex + 1];
     const account = new AccountService(env);
     const close = () => { void account.close(); };
     process.once('SIGINT', close); process.once('SIGTERM', close);

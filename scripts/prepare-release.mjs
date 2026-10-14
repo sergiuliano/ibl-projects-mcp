@@ -42,7 +42,7 @@ const runtimeLock = JSON.parse(JSON.stringify(lock));
 runtimeLock.name = runtimeName;
 runtimeLock.packages[''].name = runtimeName;
 const lockBytes = Buffer.from(JSON.stringify(runtimeLock, null, 2) + '\n');
-const modules = new Set(['contract', 'server', 'remote', 'cli', 'config', 'account', 'credentials', 'pairing', 'runtime', 'worker', 'supervisor', 'updater', 'npm']);
+const modules = new Set(['contract', 'server', 'remote', 'cli', 'config', 'account', 'credentials', 'pairing', 'harness', 'runtime', 'worker', 'supervisor', 'updater', 'npm']);
 const allowedPath = path => {
   if (['package.json', 'npm-shrinkwrap.json', 'LICENSE'].includes(path)) return true;
   const match = /^dist\/([a-z-]+)\.(?:js|d\.ts)$/.exec(path);

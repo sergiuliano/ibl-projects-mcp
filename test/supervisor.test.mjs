@@ -33,9 +33,9 @@ async function fixture(t, settings = {}) {
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport); await client.connect(clientTransport);
     const worker = {
-      root, client, protocolVersion: config.protocolVersion || '2025-11-25', closed: false, configured: [],
+      root, client, protocolVersion: config.protocolVersion || '2025-11-25', closed: false, configured: [], clientNames: [],
       async inspect() { return { version: root === next ? '2' : '1', supervisorVersion: config.supervisorVersion || 1, supervisorDigest: config.supervisorDigest || 'a'.repeat(64), workerProtocol: config.workerProtocol || 1, account: settings.account?.() || { safe: true } }; },
-      async configureHost(value) { worker.configured.push(value); },
+      async configureHost(value, clientName) { worker.configured.push(value); worker.clientNames.push(clientName); },
       async close() { worker.closed = true; await client.close(); await server.close(); },
     };
     workers.push(worker); return worker;
@@ -44,7 +44,7 @@ async function fixture(t, settings = {}) {
     createWorker: factory, check: async () => {}, select: async () => selected, rollback: async commit => { rollbacks.push(commit); },
     now: () => now, idleMs: 60_000, automaticChecks: false,
   });
-  const host = new Client({ name: 'fixture-host', version: '1' }, { capabilities: { elicitation: { form: {} } }, listChanged: settings.listChanged });
+  const host = new Client({ name: settings.hostName ?? 'fixture-host', version: '1' }, { capabilities: { elicitation: { form: {} } }, listChanged: settings.listChanged });
   const [hostTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await supervisor.connect(serverTransport); await host.connect(hostTransport);
   t.after(async () => { await host.close(); await supervisor.close(); });
@@ -52,6 +52,31 @@ async function fixture(t, settings = {}) {
     time(value) { now = value; }, prepare(metadata = {}) { selected = { root: next, commit: 'b'.repeat(40), version: '2', ...metadata }; },
   };
 }
+
+test('supervisor forwards the trimmed bounded host name to current and replacement workers', async t => {
+  for (const [hostName, expected] of [['  codex-mcp-client  ', 'codex-mcp-client'], ['x'.repeat(120), 'x'.repeat(100)], ['   ', undefined]]) {
+    await t.test(JSON.stringify(hostName), async t => {
+      const f = await fixture(t, { hostName });
+      await f.host.callTool({ name: 'work', arguments: {} });
+      assert.deepEqual(f.workers[0].clientNames, [expected]);
+      assert.equal(f.supervisor.status().runtime.supervisorVersion, 1);
+      assert.equal(f.supervisor.status().runtime.workerProtocol, 1);
+      f.prepare(); f.time(60_000); await f.supervisor.checkNow();
+      assert.equal(f.supervisor.workerRoot, next);
+      assert.deepEqual(f.workers[1].clientNames, [expected]);
+    });
+  }
+});
+
+test('supervisor tolerates a missing MCP client version', async t => {
+  const f = await fixture(t);
+  await f.host.callTool({ name: 'work', arguments: {} });
+  t.mock.method(f.supervisor.server, 'getClientVersion', () => undefined);
+  f.supervisor.server.oninitialized();
+  await f.host.callTool({ name: 'work', arguments: {} });
+  assert.equal(f.workers[0].clientNames.at(-1), undefined);
+  assert.deepEqual(f.workers[0].configured, [true, true]);
+});
 
 test('swap requires a complete 60 seconds idle after the last tool, preserving host transport', async t => {
   const f = await fixture(t);

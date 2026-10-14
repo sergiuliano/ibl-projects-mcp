@@ -22,7 +22,7 @@ export interface Worker {
   client: Client;
   protocolVersion: string;
   inspect(): Promise<WorkerState>;
-  configureHost(elicitation: boolean): Promise<void>;
+  configureHost(elicitation: boolean, clientName?: string): Promise<void>;
   close(): Promise<void>;
 }
 export interface PreparedRelease {
@@ -81,7 +81,7 @@ export async function createWorker(root: string, environment: NodeJS.ProcessEnv,
     return {
       root, client, protocolVersion,
       async inspect() { return parseState(await client.request({ method: 'maddots/runtime' }, ResultSchema, { timeout: 5_000 })); },
-      async configureHost(elicitation) { await client.request({ method: 'maddots/host', params: { elicitation } }, ResultSchema, { timeout: 5_000 }); },
+      async configureHost(elicitation, clientName) { await client.request({ method: 'maddots/host', params: { elicitation, ...(clientName ? { clientName } : {}) } }, ResultSchema, { timeout: 5_000 }); },
       async close() { signal?.removeEventListener('abort', abort); await client.close(); },
     };
   } catch (error) {
@@ -180,7 +180,7 @@ export class Supervisor {
     };
     this.server.oninitialized = () => {
       this.initialized = true;
-      this.hostReady = this.active.configureHost(!!this.server.getClientCapabilities()?.elicitation?.form);
+      this.hostReady = this.active.configureHost(!!this.server.getClientCapabilities()?.elicitation?.form, this.hostClientName());
       this.hostReady.catch(() => { this.reconnectReason = 'Host capability negotiation failed. Reconnect the MCP host.'; });
       if (dependencies.automaticChecks !== false) {
         this.stopChecks = startUpdateChecks({ ...options, signal: shutdown.signal, log: undefined }, () => this.acceptPrepared());
@@ -202,6 +202,8 @@ export class Supervisor {
       return new Supervisor(options, dependencies, worker, state, shutdown, factory, identity);
     } catch (error) { await worker.close().catch(() => {}); throw error; }
   }
+
+  private hostClientName(): string | undefined { return this.server.getClientVersion()?.name.trim().slice(0, 100) || undefined; }
 
   get activeRequests(): number { return this.count; }
   get workerRoot(): string { return this.active.root; }
@@ -296,7 +298,7 @@ export class Supervisor {
         return;
       }
       this.bind(candidate);
-      await candidate.configureHost(!!this.server.getClientCapabilities()?.elicitation?.form);
+      await candidate.configureHost(!!this.server.getClientCapabilities()?.elicitation?.form, this.hostClientName());
       // Calls and account transitions may arrive while the candidate starts.
       const currentAccount = (await this.active.inspect()).account;
       if (!this.idle() || this.pending !== pending || !currentAccount.safe) {

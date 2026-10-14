@@ -4,7 +4,7 @@ import { chmod, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath, URL } from 'node:url';
+import { fileURLToPath, pathToFileURL, URL } from 'node:url';
 import { setImmediate, setTimeout } from 'node:timers';
 import { promisify } from 'node:util';
 import process from 'node:process';
@@ -18,8 +18,12 @@ import { createMcpServer } from '../dist/server.js';
 import { TOOL_DEFINITIONS, ALL_WORKSPACE_TOOL_DEFINITIONS } from '../dist/contract.js';
 import { AccountService, CONNECT_ACCOUNT_TOOL } from '../dist/account.js';
 import { CredentialStore } from '../dist/credentials.js';
-import { PairingFlow } from '../dist/pairing.js';
+import { AI_HARNESSES, PairingFlow, pairingHarness } from '../dist/pairing.js';
+import { detectHarness } from '../dist/harness.js';
+import { createWorker } from '../dist/supervisor.js';
 import { accessToken, BridgeError } from '../dist/config.js';
+import { launch } from '../dist/cli.js';
+import { run as runRuntime } from '../dist/runtime.js';
 
 const run = promisify(execFile);
 const cli = resolve(dirname(fileURLToPath(import.meta.url)), '../dist/cli.js');
@@ -39,7 +43,7 @@ async function directory(t) {
   t.after(() => rm(path, { recursive: true, force: true }));
   return path;
 }
-function virtualFlow(replies, { instructions, sleep: onSleep } = {}) {
+function virtualFlow(replies, { instructions, sleep: onSleep, harness } = {}) {
   let now = Date.now();
   const waits = [], requests = [];
   const timing = { now: () => now, sleep: async (ms, signal) => { waits.push(ms); now += ms; if (signal.aborted) throw new BridgeError('PAIRING_CANCELLED', 'Cancelled.'); await onSleep?.(ms, signal); } };
@@ -51,7 +55,7 @@ function virtualFlow(replies, { instructions, sleep: onSleep } = {}) {
     if (requests.length === 1) return response({ ...issue(now), ...instructions });
     const next = replies.shift();
     return typeof next === 'function' ? next() : next ?? response({ status: 'pending' });
-  });
+  }, harness);
   return { flow, waits, requests };
 }
 
@@ -64,6 +68,7 @@ test('pairing returns only a code/link and claims one credential after bounded p
   const saved = await fixture.flow.wait();
   assert.equal(saved.secret, secret);
   assert.deepEqual(fixture.waits, [3000, 3000]);
+  assert.deepEqual(JSON.parse(fixture.requests[0].init.body), { clientName: 'MadDots MCP', scopes, workspaceAccess: 'all' });
   assert.deepEqual(fixture.requests.slice(1).map(item => JSON.parse(item.init.body)), [{ deviceCode }, { deviceCode }]);
 });
 
@@ -768,4 +773,137 @@ test('a late authorization failure from the old initializer cannot erase the pro
   assert.equal((await account.callTool('connect_account', { action: 'status' })).structuredContent.account.name, 'Replacement');
   assert.equal(await account.workspaceAccess(), true);
   assert.equal((await account.callTool('list_projects', {})).structuredContent.replacement, true);
+});
+
+
+test('host detection uses confirmed names and A1 ids only', () => {
+  const rows = [
+    ['codex-mcp-client', 'codex'], ['codex-desktop', 'codex'],
+    ['cursor-vscode', 'cursor'], ['cursor', 'cursor'],
+    ['Cline', 'cline'], ['continue-client', 'continue'], ['gemini-cli-mcp-client', 'gemini-cli'],
+    ['opencode', 'opencode'], ['omp-coding-agent', 'oh-my-pi'], ['openclaw-bundle-mcp', 'openclaw'],
+    ['claude-code', 'claude-code'],
+    ['grok-shell-maddots', 'grok-cli'],
+  ];
+  for (const [name, expected] of rows) {
+    assert.ok(AI_HARNESSES.includes(expected));
+    for (const variant of [name, name.toUpperCase(), name.toLowerCase(), '  ' + name + '  ']) assert.equal(detectHarness(variant), expected, variant);
+  }
+  for (const name of [undefined, null, 42, {}, [], '', '   ', 'unknown-host', 'constructor', 'mcp', 'maddots-supervisor', 'grok-cli', 'gemini-cli', 'continue', 'oh-my-pi', 'openclaw', 'claude-ai', 'Visual Studio Code', 'devin', 'antigravity-client', 'hermes-agent']) {
+    assert.equal(detectHarness(name), undefined);
+  }
+});
+
+test('detected Codex pairing adds only the harness and unknown hosts retain the exact body', async () => {
+  const original = '{"clientName":"MadDots MCP","scopes":["kanban:read","kanban:write"],"workspaceAccess":"all"}';
+  for (const name of [undefined, '', 'unknown-host', 'codex-mcp-client']) {
+    const f = virtualFlow([response(approved())], { harness: detectHarness(name) });
+    await f.flow.start(scopes); await f.flow.wait();
+    assert.equal(f.requests[0].init.body, name === 'codex-mcp-client' ? original.slice(0, -1) + ',"harness":"codex"}' : original);
+    assert.equal(f.requests[1].init.body, '{"deviceCode":"' + deviceCode + '"}');
+  }
+});
+
+test('account pairing detects its host at pairing time and preserves explicit settings', async t => {
+  for (const [clientName, configured, expected] of [['codex-mcp-client', undefined, 'codex'], ['unknown-host', undefined, undefined], [undefined, undefined, undefined], ['codex-mcp-client', 'claude-code', 'claude-code']]) {
+    await t.test(JSON.stringify([clientName, configured]), async t => {
+      const bodies = [];
+      t.mock.method(globalThis, 'fetch', async (_address, init) => { bodies.push(init.body); return response({}, 503); });
+      const account = new AccountService({ PM_MCP_URL: url.href, ...(configured ? { MADDOTS_MCP_HARNESS: configured } : {}) }, {
+        store: { load: async () => undefined }, remote: { close: async () => {} },
+      });
+      t.after(() => account.close());
+      account.setHostClientName(clientName);
+      const result = await account.callTool('connect_account', {});
+      assert.equal(result.structuredContent.error.code, 'PAIRING_UNAVAILABLE');
+      assert.deepEqual(bodies, [JSON.stringify({ clientName: 'MadDots MCP', scopes, workspaceAccess: 'all', ...(expected ? { harness: expected } : {}) })]);
+    });
+  }
+});
+
+test('new worker pairs with detected, unknown and old-supervisor host handshakes', { timeout: 15_000 }, async t => {
+  for (const clientName of ['codex-mcp-client', 'unknown-host', undefined]) {
+    await t.test(String(clientName), async t => {
+      const stateDir = await directory(t), bodyFile = join(stateDir, 'bodies.jsonl'), preload = join(stateDir, 'fetch.mjs');
+      await writeFile(preload, `import { appendFile } from 'node:fs/promises';
+globalThis.fetch = async (address, init) => {
+  if (new URL(address).pathname !== '/api/mcp/pairings') throw new Error('Unexpected fixture request');
+  await appendFile(${JSON.stringify(bodyFile)}, init.body + '\\n');
+  return new Response('{}', { status: 503 });
+};
+`);
+      const env = { ...cleanEnv(), PM_MCP_URL: url.href, PM_MCP_STATE_DIR: stateDir, NODE_OPTIONS: ((process.env.NODE_OPTIONS || '') + ' --import=' + pathToFileURL(preload).href).trim() };
+      const worker = await createWorker(resolve(dirname(cli), '..'), env);
+      t.after(() => worker.close());
+      const state = await worker.inspect();
+      assert.equal(state.supervisorVersion, 1);
+      assert.equal(state.workerProtocol, 1);
+      await worker.configureHost(false, clientName);
+      const result = await worker.client.callTool({ name: 'connect_account', arguments: {} });
+      assert.equal(result.structuredContent.error.code, 'PAIRING_UNAVAILABLE');
+      assert.equal(await readFile(bodyFile, 'utf8'), JSON.stringify({ clientName: 'MadDots MCP', scopes, workspaceAccess: 'all', ...(clientName === 'codex-mcp-client' ? { harness: 'codex' } : {}) }) + '\n');
+    });
+  }
+});
+
+test('pairing sends a known harness only when configured and leaves polling unchanged', async () => {
+  for (const harness of AI_HARNESSES) {
+    const fixture = virtualFlow([response(approved())], { harness });
+    await fixture.flow.start(scopes); await fixture.flow.wait();
+    assert.deepEqual(JSON.parse(fixture.requests[0].init.body), { clientName: 'MadDots MCP', scopes, workspaceAccess: 'all', harness });
+    assert.deepEqual(JSON.parse(fixture.requests[1].init.body), { deviceCode });
+  }
+});
+
+test('harness configuration accepts known keys, omits absent values and rejects unknown values', () => {
+  assert.equal(pairingHarness({}), undefined);
+  assert.equal(pairingHarness({ MADDOTS_MCP_HARNESS: '' }), undefined);
+  for (const harness of AI_HARNESSES) assert.equal(pairingHarness({ MADDOTS_MCP_HARNESS: harness }), harness);
+  assert.equal(pairingHarness({ MADDOTS_MCP_HARNESS: 'claude-code' }, 'codex'), 'codex');
+  for (const harness of ['unknown', 'Claude Code', ' codex ']) {
+    assert.throws(() => pairingHarness({ MADDOTS_MCP_HARNESS: harness }), error => error.code === 'CONFIG_ERROR');
+    assert.throws(() => pairingHarness({}, harness), error => error.code === 'CONFIG_ERROR');
+  }
+});
+
+test('setup passes flag and environment harnesses into pairing without changing the default client name', async t => {
+  const bodies = [];
+  t.mock.method(globalThis, 'fetch', async (address, init) => {
+    assert.equal(address.pathname, '/api/mcp/pairings');
+    bodies.push(JSON.parse(init.body));
+    return response({}, 503);
+  });
+  const env = { ...cleanEnv(), PM_MCP_URL: url.href, PM_MCP_STATE_DIR: await directory(t), MADDOTS_MCP_HARNESS: 'claude-code' };
+  const context = { options: { env }, bootstrapRoot: resolve(dirname(cli), '..'), runtimeRoot: resolve(dirname(cli), '..'), bootstrapVersion: '1', runtimeVersion: '1' };
+  for (const args of [['--setup', '--harness', 'codex'], ['--harness', 'codex', '--setup'], ['--setup']]) {
+    await assert.rejects(runRuntime(args, context), error => error.code === 'PAIRING_UNAVAILABLE');
+    assert.deepEqual(bodies.at(-1), { clientName: 'MadDots MCP', scopes, workspaceAccess: 'all', harness: args.includes('--harness') ? 'codex' : 'claude-code' });
+    assert.equal(env.MADDOTS_MCP_HARNESS, 'claude-code');
+  }
+  env.MADDOTS_MCP_HARNESS = 'unknown';
+  await assert.rejects(runRuntime(['--setup'], context), error => error.code === 'CONFIG_ERROR');
+  assert.equal(bodies.length, 3, 'Invalid environment harness cannot contact the service.');
+});
+
+test('setup harness arguments reach the runtime exactly once and invalid flags fail before launch', async () => {
+  let launches = 0;
+  const dependencies = {
+    options: { repository: 'example-owner/example-client', version: '1', bundledRoot: '/fixture/bootstrap', env: { MADDOTS_MCP_AUTO_UPDATE: '0' } },
+    select: async () => ({ root: '/fixture/runtime', version: '1' }),
+    run: async () => { launches++; },
+  };
+  for (const args of [['--setup', '--harness', 'codex'], ['--harness', 'claude-code', '--setup', '--read-only', '--reconnect']]) {
+    const before = launches;
+    await launch(args, { ...dependencies, run: async actual => { launches++; assert.deepEqual(actual, args); } });
+    assert.equal(launches, before + 1);
+  }
+  for (const [args, code] of [
+    [['--setup', '--harness', 'unknown'], 'CONFIG_ERROR'],
+    [['--setup', '--harness'], 'CLI_ARGUMENTS'],
+    [['--harness', 'codex'], 'CLI_ARGUMENTS'],
+    [['--setup', '--harness', ''], 'CLI_ARGUMENTS'],
+    [['--setup', '--harness', '--read-only'], 'CLI_ARGUMENTS'],
+    [['--setup', '--harness', 'codex', '--harness', 'claude-code'], 'CLI_ARGUMENTS'],
+  ]) await assert.rejects(launch(args, dependencies), error => error.code === code);
+  assert.equal(launches, 2);
 });
