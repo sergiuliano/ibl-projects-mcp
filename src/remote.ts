@@ -1,7 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport, StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
-import { MCP_VERSION, TOOL_DEFINITIONS, ALL_WORKSPACE_TOOL_DEFINITIONS, LIVE_TOOL_DEFINITIONS, LIVE_ALL_WORKSPACE_TOOL_DEFINITIONS, MCP_CONTRACT_HEADER, MCP_LIVE_CONTRACT_VERSION, MCP_PLAN_CONTRACT_VERSION, PLAN_TOOL_DEFINITIONS, PLAN_ALL_WORKSPACE_TOOL_DEFINITIONS, PLAN_OPERATIONS, STAR_OPERATIONS, STAR_TOOL_DEFINITIONS, STAR_ALL_WORKSPACE_TOOL_DEFINITIONS, MCP_STARS_HEADER, MCP_STARS_CAPABILITY_VERSION } from './contract.js';
+import { MCP_VERSION, TOOL_DEFINITIONS, ALL_WORKSPACE_TOOL_DEFINITIONS, LIVE_TOOL_DEFINITIONS, LIVE_ALL_WORKSPACE_TOOL_DEFINITIONS, MCP_CONTRACT_HEADER, MCP_LIVE_CONTRACT_VERSION, MCP_PLAN_CONTRACT_VERSION, PLAN_TOOL_DEFINITIONS, PLAN_ALL_WORKSPACE_TOOL_DEFINITIONS, PLAN_OPERATIONS, STAR_OPERATIONS, STAR_TOOL_DEFINITIONS, STAR_ALL_WORKSPACE_TOOL_DEFINITIONS, MCP_STARS_HEADER, MCP_STARS_CAPABILITY_VERSION, PLAN_AGENT_OPERATIONS, PLAN_AGENT_TOOL_DEFINITIONS, PLAN_AGENT_ALL_WORKSPACE_TOOL_DEFINITIONS, MCP_PLAN_AGENT_HEADER, MCP_PLAN_AGENT_CAPABILITY_VERSION } from './contract.js';
 import { accessToken, BridgeError, endpoint } from './config.js';
 
 // Ignore descriptive metadata, but retain all validation and default semantics.
@@ -28,11 +28,12 @@ export type WorkspaceAccess = 'workspace' | 'all';
 
 export function verifyCatalog(actual: Tool[]): WorkspaceAccess {
   const stars = actual.some(tool => STAR_OPERATIONS.some(operation => operation.tool.name === tool.name));
-  const core = actual.filter(tool => !STAR_OPERATIONS.some(operation => operation.tool.name === tool.name));
+  const planAgent = actual.some(tool => PLAN_AGENT_OPERATIONS.some(operation => operation.tool.name === tool.name));
+  const core = actual.filter(tool => !STAR_OPERATIONS.some(operation => operation.tool.name === tool.name) && !PLAN_AGENT_OPERATIONS.some(operation => operation.tool.name === tool.name));
   const plan = actual.some(tool => tool.name === 'get_my_plan');
   const live = actual.some(tool => tool.name === 'resolve_link');
   const mode = live ? (actual.find(tool=>tool.name==='list_projects')?.inputSchema.properties?.workspaceId ? 'all' : 'workspace') : (core.length === ALL_WORKSPACE_TOOL_DEFINITIONS.length ? 'all' : 'workspace');
-  const expected = new Map([...(plan ? (mode === 'all' ? PLAN_ALL_WORKSPACE_TOOL_DEFINITIONS : PLAN_TOOL_DEFINITIONS) : live ? (mode === 'all' ? LIVE_ALL_WORKSPACE_TOOL_DEFINITIONS : LIVE_TOOL_DEFINITIONS) : (mode === 'all' ? ALL_WORKSPACE_TOOL_DEFINITIONS : TOOL_DEFINITIONS)), ...(stars ? (mode === 'all' ? STAR_ALL_WORKSPACE_TOOL_DEFINITIONS : STAR_TOOL_DEFINITIONS) : [])].map(tool => [tool.name, tool]));
+  const expected = new Map([...(plan ? (mode === 'all' ? PLAN_ALL_WORKSPACE_TOOL_DEFINITIONS : PLAN_TOOL_DEFINITIONS) : live ? (mode === 'all' ? LIVE_ALL_WORKSPACE_TOOL_DEFINITIONS : LIVE_TOOL_DEFINITIONS) : (mode === 'all' ? ALL_WORKSPACE_TOOL_DEFINITIONS : TOOL_DEFINITIONS)), ...(stars ? (mode === 'all' ? STAR_ALL_WORKSPACE_TOOL_DEFINITIONS : STAR_TOOL_DEFINITIONS) : []), ...(planAgent ? (mode === 'all' ? PLAN_AGENT_ALL_WORKSPACE_TOOL_DEFINITIONS : PLAN_AGENT_TOOL_DEFINITIONS) : [])].map(tool => [tool.name, tool]));
   const names = new Set(actual.map(tool => tool.name));
   if (actual.length !== expected.size || names.size !== expected.size || actual.some(tool => !expected.has(tool.name))) {
     throw new BridgeError('REMOTE_CONTRACT_MISMATCH', `The hosted MCP tool list differs from client ${MCP_VERSION}. Install the compatible signed release from https://maddots.app/docs/mcp and restart the MCP connection. No project operation was submitted.`);
@@ -58,6 +59,7 @@ export class RemoteService {
   private live = false;
   private plan = false;
   private stars = false;
+  private planAgent = false;
   private refreshing?: Promise<WorkspaceAccess>;
   private catalogError?: BridgeError;
   private workspaceAccess: WorkspaceAccess = 'workspace';
@@ -70,7 +72,7 @@ export class RemoteService {
     this.client = client;
     try {
       await client.connect(new StreamableHTTPClientTransport(url, {
-        requestInit: { headers: { Authorization: `Bearer ${token}`, [MCP_CONTRACT_HEADER]: MCP_LIVE_CONTRACT_VERSION, [MCP_STARS_HEADER]: MCP_STARS_CAPABILITY_VERSION }, redirect: 'error' },
+        requestInit: { headers: { Authorization: `Bearer ${token}`, [MCP_CONTRACT_HEADER]: MCP_LIVE_CONTRACT_VERSION, [MCP_STARS_HEADER]: MCP_STARS_CAPABILITY_VERSION, [MCP_PLAN_AGENT_HEADER]: MCP_PLAN_AGENT_CAPABILITY_VERSION }, redirect: 'error' },
         // The SDK's standalone SSE GET does not inherit requestInit.
         fetch: async (requestUrl, init) => {
           if (new URL(requestUrl).origin !== url.origin) {
@@ -80,13 +82,14 @@ export class RemoteService {
         },
       }));
       let catalog = await this.readCatalog(client, false);
-      if (catalog.planAvailable || catalog.starsAvailable) catalog = await this.readCatalog(client, catalog.planAvailable, catalog.starsAvailable);
+      if (catalog.planAvailable || catalog.starsAvailable || catalog.planAgentAvailable) catalog = await this.readCatalog(client, catalog.planAvailable, catalog.starsAvailable, catalog.planAgentAvailable);
       const tools = catalog.tools;
       this.workspaceAccess = verifyCatalog(tools);
       this.catalogError=undefined;
       this.live = tools.some(tool=>tool.name==='resolve_link');
       this.plan = tools.some(tool=>tool.name==='get_my_plan');
       this.stars = tools.some(tool=>tool.name==='list_starred_tasks');
+      this.planAgent = tools.some(tool=>PLAN_AGENT_OPERATIONS.some(operation=>operation.tool.name===tool.name));
       return this.workspaceAccess;
     } catch (error) {
       await this.close();
@@ -98,22 +101,25 @@ export class RemoteService {
   }
 
   // Preserve existing JSON-RPC discovery payloads. The transport opts into
-  // personal stars; authenticated metadata controls further capability discovery.
-  private async readCatalog(client:Client,requestPlan:boolean,requestStars=false):Promise<{tools:Tool[];planAvailable:boolean;starsAvailable:boolean}>{
-    const tools:Tool[]=[];let cursor:string|undefined,pages=0,planAvailable=false,starsAvailable=false;
+  // personal stars and Plan agents; authenticated metadata controls further capability discovery.
+  private async readCatalog(client:Client,requestPlan:boolean,requestStars=false,requestPlanAgent=false):Promise<{tools:Tool[];planAvailable:boolean;starsAvailable:boolean;planAgentAvailable:boolean}>{
+    const tools:Tool[]=[];let cursor:string|undefined,pages=0,planAvailable=false,starsAvailable=false,planAgentAvailable=false;
     do {
-      const meta={...(requestPlan?{'maddots/contract':MCP_PLAN_CONTRACT_VERSION}:{}),...(requestStars?{'maddots/stars':true}:{})};
-      const params=requestPlan||requestStars?{...cursor?{cursor}:{},_meta:meta}:cursor?{cursor}:undefined;
+      const meta={...(requestPlan?{'maddots/contract':MCP_PLAN_CONTRACT_VERSION}:{}),...(requestStars?{'maddots/stars':true}:{}),...(requestPlanAgent?{'maddots/plan-agent':true}:{})};
+      const params=requestPlan||requestStars||requestPlanAgent?{...cursor?{cursor}:{},_meta:meta}:cursor?{cursor}:undefined;
       const page=await client.listTools(params);
       planAvailable ||= page._meta?.['maddots/plan']===true;
       starsAvailable ||= page._meta?.['maddots/stars']===true;
+      planAgentAvailable ||= page._meta?.['maddots/plan-agent']===true;
       tools.push(...page.tools);cursor=page.nextCursor;
       if(++pages>100||tools.length>1000)throw new BridgeError('REMOTE_CONTRACT_MISMATCH','The hosted MCP catalog exceeded the supported size.');
     }while(cursor);
-    return {tools,planAvailable,starsAvailable};
+    return {tools,planAvailable,starsAvailable,planAgentAvailable};
   }
 
   starsAccess(): boolean { return this.stars; }
+
+  planAgentAccess(): boolean { return this.planAgent; }
 
   planAccess(): boolean { return this.plan; }
 
@@ -122,17 +128,17 @@ export class RemoteService {
   async refreshCatalog(): Promise<WorkspaceAccess> {
     if(!this.client)throw new BridgeError('NOT_CONNECTED','Initialize the MCP connection before refreshing access.');
     if(!this.refreshing)this.refreshing=(async()=>{
-      let catalog=await this.readCatalog(this.client!,this.plan,this.stars);
-      if(!this.plan&&catalog.planAvailable||!this.stars&&catalog.starsAvailable)catalog=await this.readCatalog(this.client!,this.plan||catalog.planAvailable,this.stars||catalog.starsAvailable);
+      let catalog=await this.readCatalog(this.client!,this.plan,this.stars,this.planAgent);
+      if(!this.plan&&catalog.planAvailable||!this.stars&&catalog.starsAvailable||!this.planAgent&&catalog.planAgentAvailable)catalog=await this.readCatalog(this.client!,this.plan||catalog.planAvailable,this.stars||catalog.starsAvailable,this.planAgent||catalog.planAgentAvailable);
       const tools=catalog.tools;
-      this.workspaceAccess=verifyCatalog(tools);this.catalogError=undefined;this.live=tools.some(tool=>tool.name==='resolve_link');this.plan=tools.some(tool=>tool.name==='get_my_plan');this.stars=tools.some(tool=>tool.name==='list_starred_tasks');return this.workspaceAccess;
+      this.workspaceAccess=verifyCatalog(tools);this.catalogError=undefined;this.live=tools.some(tool=>tool.name==='resolve_link');this.plan=tools.some(tool=>tool.name==='get_my_plan');this.stars=tools.some(tool=>tool.name==='list_starred_tasks');this.planAgent=tools.some(tool=>PLAN_AGENT_OPERATIONS.some(operation=>operation.tool.name===tool.name));return this.workspaceAccess;
     })().catch(error=>{this.catalogError=error instanceof BridgeError?error:error instanceof StreamableHTTPError&&error.code===401?new BridgeError('AUTH_REQUIRED','Account authorization expired or was revoked. No tool operation was submitted.'):new BridgeError('REMOTE_CONNECTION_FAILED','Cannot refresh hosted MCP capabilities. No project operation was submitted.');throw this.catalogError;}).finally(()=>{this.refreshing=undefined;});
     return this.refreshing;
   }
 
   async callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<CallToolResult> {
     if(this.catalogError)return failure(this.catalogError.code,this.catalogError.message);
-    const definition = [...(this.plan ? (this.workspaceAccess === 'all' ? PLAN_ALL_WORKSPACE_TOOL_DEFINITIONS : PLAN_TOOL_DEFINITIONS) : this.live ? (this.workspaceAccess === 'all' ? LIVE_ALL_WORKSPACE_TOOL_DEFINITIONS : LIVE_TOOL_DEFINITIONS) : (this.workspaceAccess === 'all' ? ALL_WORKSPACE_TOOL_DEFINITIONS : TOOL_DEFINITIONS)), ...(this.stars ? (this.workspaceAccess === 'all' ? STAR_ALL_WORKSPACE_TOOL_DEFINITIONS : STAR_TOOL_DEFINITIONS) : [])].find(tool => tool.name === name);
+    const definition = [...(this.plan ? (this.workspaceAccess === 'all' ? PLAN_ALL_WORKSPACE_TOOL_DEFINITIONS : PLAN_TOOL_DEFINITIONS) : this.live ? (this.workspaceAccess === 'all' ? LIVE_ALL_WORKSPACE_TOOL_DEFINITIONS : LIVE_TOOL_DEFINITIONS) : (this.workspaceAccess === 'all' ? ALL_WORKSPACE_TOOL_DEFINITIONS : TOOL_DEFINITIONS)), ...(this.stars ? (this.workspaceAccess === 'all' ? STAR_ALL_WORKSPACE_TOOL_DEFINITIONS : STAR_TOOL_DEFINITIONS) : []), ...(this.planAgent ? (this.workspaceAccess === 'all' ? PLAN_AGENT_ALL_WORKSPACE_TOOL_DEFINITIONS : PLAN_AGENT_TOOL_DEFINITIONS) : [])].find(tool => tool.name === name);
     if (!definition) return failure('TOOL_UNAVAILABLE', 'This tool is unavailable in the client contract.', false);
     if (!this.client) return failure('NOT_CONNECTED', 'Initialize the MCP connection before calling tools.', false);
     if (signal?.aborted) return failure('CANCELLED', 'The call was cancelled before submission.', false);
@@ -141,7 +147,9 @@ export class RemoteService {
         ? { name, arguments: args, _meta: {'maddots/contract': MCP_PLAN_CONTRACT_VERSION} }
         : STAR_OPERATIONS.some(operation => operation.tool.name === name)
           ? {name, arguments:args, _meta:{'maddots/stars':true}}
-          : { name, arguments: args };
+          : PLAN_AGENT_OPERATIONS.some(operation => operation.tool.name === name)
+            ? {name, arguments:args, _meta:{'maddots/plan-agent':true}}
+            : { name, arguments: args };
       return await this.client.callTool(params, undefined, { signal, timeout: 120_000 }) as CallToolResult;
     } catch (error) {
       if (error instanceof StreamableHTTPError && error.code === 401) return failure('AUTH_REQUIRED', 'Account authorization expired or was revoked. Call connect_account with action reconnect. The rejected operation was not retried.');

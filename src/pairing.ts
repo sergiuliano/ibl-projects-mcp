@@ -2,7 +2,7 @@ import { BridgeError } from './config.js';
 import { parseCredential, type Credential, type Scope } from './credentials.js';
 
 // Kept in sync with shared/ai-harness.ts by the pairing API test; this client exports standalone.
-export const AI_HARNESSES = ['codex', 'claude-code', 'claude-app', 'cursor', 'copilot', 'devin', 'cline', 'continue', 'gemini-cli', 'antigravity', 'opencode', 'oh-my-pi', 'openclaw', 'hermes-agent', 'grok-cli', 'chatgpt', 'other'] as const;
+export const AI_HARNESSES = ['codex', 'claude-code', 'claude-app', 'cursor', 'copilot', 'devin', 'cline', 'continue', 'gemini-cli', 'antigravity', 'opencode', 'oh-my-pi', 'openclaw', 'hermes-agent', 'grok-cli', 'deepseek-harness', 'chatgpt', 'other'] as const;
 export type AiHarness = typeof AI_HARNESSES[number];
 export function pairingHarness(env: NodeJS.ProcessEnv, override?: string): AiHarness | undefined {
   const value = override ?? env.MADDOTS_MCP_HARNESS;
