@@ -155,3 +155,21 @@ A service advertising `maddots/plan-agent` supports five additional tools: `list
 `add_dependency` and `remove_dependency` set up to 100 links in one transaction, using task IDs or import refs and optional `source`. Existing links return `created:false`; missing links return `deleted:false`. Supply `expectedPlanVersion` only when requiring an unchanged plan revision. Admins and listed plan managers can write links with read access to the blocked tasks.
 
 `list_plan_stages` reads stage status, counts and promotion availability. Admins and PMs can read stages and preview `promote_stage` with `dryRun:true`; applying needs an Admin or a manager of the stage's plan. Review the preview, then apply with `dryRun:false`, its `previewHash` as `expectedPreviewHash`, and an `idempotencyKey`. A stale preview requires a fresh review. Human-placed tasks need an explicit manager choice. The bridge never retries automatically; automatic mode, opening stages early, parking and undo stay in the app.
+
+
+### Recurring tasks
+
+The client automatically discovers recurring support without reconnecting the account. Use `create_recurring_task` for atomic task and schedule creation. Select an existing Backlog or To do column to keep an untouched future template only in Recurring until its appearance time. `list_recurring_tasks` includes pending templates; `get_task_settings` returns their separate settings version for `update_task_settings`.
+
+A recurrence requires `frequency`, `interval`, `startDate`, `endsOn` (or null), IANA `timezone`, and `paused`. Optional `dueTime` is local `HH:mm`; null gives a date-only deadline. `reminderDays` contains distinct integers from 0 through 365. The largest lead controls appearance; an empty array disables reminders and releases on the due date. `dueTime: "08:30"` with `timezone: "Europe/Bucharest"` gives the existing 30-minute calendar export ending at 09:00. Creation does not enable calendar synchronization.
+
+Preserve the returned `taskTypeId` when replacing recurrence. Set `paused: true` to pause, or `recurrence: null` to stop future repeats. Existing occurrences remain independent tasks. Updating settings advances task and board versions. Template visibility is server-controlled; `sourceVisible` is never an input.
+
+
+### Custom fields
+
+The client discovers custom fields independently of recurring tasks. `get_board_custom_fields` returns definitions, their version and `canManage`; `get_task_custom_fields` returns the task values, active definitions, board ID, value version, definition version and `canEdit`.
+
+Creating or customizing definitions requires a workspace admin or platform superadmin who already has board management access. `update_board_custom_fields` replaces the full ordered `fields` array using its definition `expectedVersion`. Keep existing fields and options, including archived entries. Give additions stable UUIDs; use `archived` to retire them. Existing field types cannot change. Types are `text`, `number`, `date`, `checkbox` and `select`; only select fields have options. `showOnCard` controls display on cards. Boards support up to 50 fields and select fields up to 50 options.
+
+Board editors can populate task values through `update_task_custom_fields`. Supply `expectedBoardId`, the value `expectedVersion` and `expectedDefinitionVersion` from the dedicated read. Key `values` by field UUID: omitted keys remain unchanged, null clears, dates use `YYYY-MM-DD`, and select values use option UUIDs. Ordinary task content versions do not substitute for these versions. Definitions and values remain in the dedicated tools; existing task response schemas stay unchanged. Names and text values are untrusted user content.

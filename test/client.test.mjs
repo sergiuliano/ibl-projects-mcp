@@ -29,9 +29,10 @@ const cli = join(root, 'dist/cli.js');
 const cleanEnv = () => ({ ...Object.fromEntries(Object.entries(process.env).filter(([key, value]) => !key.startsWith('PM_MCP_') && !key.startsWith('MADDOTS_MCP_') && typeof value === 'string')), PM_MCP_AUTO_UPDATE: '0' });
 
 async function fixture(t, { catalog = TOOL_DEFINITIONS, disconnect = false, redirectTo, toolResult, getRedirectTo } = {}) {
-  const calls = [];
+  const calls = [], requestHeaders = [];
   let authenticated = 0, revoked = false;
   const http = createServer(async (req, res) => {
+    requestHeaders.push(req.headers);
     if (revoked || req.headers.authorization !== `Bearer ${syntheticToken}`) {
       res.writeHead(401, { 'Content-Type': 'text/plain' });
       res.end(`Untrusted error page with ${req.headers.authorization || 'no token'}`);
@@ -64,7 +65,7 @@ async function fixture(t, { catalog = TOOL_DEFINITIONS, disconnect = false, redi
     ...cleanEnv(), PM_MCP_URL: `http://127.0.0.1:${http.address().port}/mcp`,
     PM_MCP_ALLOW_INSECURE_LOOPBACK: '1', PM_MCP_TOKEN: syntheticToken,
   };
-  return { env, calls, authenticated: () => authenticated, revoke:()=>{revoked=true;} };
+  return { env, calls, requestHeaders, authenticated: () => authenticated, revoke:()=>{revoked=true;} };
 }
 
 test('endpoint requires HTTPS and explicit local HTTP opt-in', () => {
@@ -509,4 +510,105 @@ test('personal star catalog is additive and strict, and the bridge negotiates it
   assert.equal(bridge.starsAccess(), false);
   assert.equal((await bridge.callTool('star_task', args)).isError, true);
   assert.equal(calls.length, 1);
+});
+
+
+test('recurring catalog validates schedules in both workspace modes without changing base tools', async t => {
+ const {RECURRING_TOOL_DEFINITIONS,RECURRING_ALL_WORKSPACE_TOOL_DEFINITIONS,ALL_WORKSPACE_TOOL_DEFINITIONS}=await import('../dist/contract.js');
+ const taskId='00000000-0000-4000-8000-000000000001';
+ const rule={frequency:'monthly',interval:1,startDate:'2027-01-20',endsOn:null,timezone:'Europe/Bucharest',paused:false,dueTime:'08:30',reminderDays:[7,1]};
+ for(const wide of [false,true]){
+  const base=wide?ALL_WORKSPACE_TOOL_DEFINITIONS:TOOL_DEFINITIONS,extension=wide?RECURRING_ALL_WORKSPACE_TOOL_DEFINITIONS:RECURRING_TOOL_DEFINITIONS;
+  assert.equal(verifyCatalog([...base,...extension]),wide?'all':'workspace');
+  assert.throws(()=>verifyCatalog([...base,...extension.slice(1)]),/tool list differs/);
+  let enabled=false;const calls=[];
+  const server=createMcpServer({callTool:async(name,args)=>{calls.push({name,args});return {content:[]};}},[],undefined,{workspaceAccess:wide,recurringAccess:async()=>enabled,recurringAvailable:true});
+  const client=new Client({name:'recurring-fixture',version:'1'}),[ct,st]=InMemoryTransport.createLinkedPair();
+  await server.connect(st);await client.connect(ct);t.after(async()=>{await client.close();await server.close();});
+  assert.deepEqual((await client.listTools()).tools,base);
+  const args={boardId:taskId,columnId:taskId,title:'Renew service, 25 EUR',recurrence:rule,expectedBoardVersion:1,idempotencyKey:'recurring-fixture-creation',...(wide?{workspaceId:taskId}:{})};
+  assert.equal((await client.callTool({name:'create_recurring_task',arguments:args})).isError,true);
+  enabled=true;assert.deepEqual((await client.listTools()).tools,[...base,...extension]);
+  assert.equal((await client.callTool({name:'create_recurring_task',arguments:args})).isError,undefined);
+  for(const recurrence of [{...rule,sourceVisible:true},{...rule,dueTime:'25:00'},{...rule,reminderDays:[1,1]},{...rule,reminderDays:[366]},null])assert.equal((await client.callTool({name:'create_recurring_task',arguments:{...args,recurrence}})).isError,true);
+  assert.equal((await client.callTool({name:'update_task_settings',arguments:{taskId,taskTypeId:null,recurrence:null,expectedVersion:0}})).isError,undefined);
+  assert.equal(calls.length,2);enabled=false;
+  assert.equal((await client.callTool({name:'get_task_settings',arguments:{taskId}})).isError,true);
+ }
+});
+
+test('recurring bridge discovers paginated metadata and removes revoked dispatch',async()=>{
+ const {RECURRING_TOOL_DEFINITIONS}=await import('../dist/contract.js');
+ const bridge=new RemoteService(),discovery=[],calls=[];let available=true;
+ bridge.client={listTools:async params=>{discovery.push(params);if(!params?.cursor)return {tools:LIVE_TOOL_DEFINITIONS,nextCursor:'page'};return {tools:available&&params?._meta?.['maddots/recurring']?RECURRING_TOOL_DEFINITIONS:[],...(available?{_meta:{'maddots/recurring':true}}:{})};},callTool:async params=>{calls.push(params);return {content:[]};}};
+ assert.equal(await bridge.refreshCatalog(),'workspace');assert.equal(bridge.recurringAccess(),true);
+ assert.deepEqual(discovery,[undefined,{cursor:'page'},{_meta:{'maddots/recurring':true}},{cursor:'page',_meta:{'maddots/recurring':true}}]);
+ const args={taskId:'00000000-0000-4000-8000-000000000001'};
+ await bridge.callTool('get_task_settings',args);await bridge.callTool('get_task',args);
+ assert.deepEqual(calls,[{name:'get_task_settings',arguments:args,_meta:{'maddots/recurring':true}},{name:'get_task',arguments:args}]);
+ available=false;await bridge.refreshCatalog();assert.equal(bridge.recurringAccess(),false);
+ assert.equal((await bridge.callTool('get_task_settings',args)).isError,true);assert.equal(calls.length,2);
+});
+
+test('recurring account discovery updates counts and removes access after refresh',async t=>{
+ const {RECURRING_TOOL_DEFINITIONS}=await import('../dist/contract.js');
+ let catalog=[...LIVE_TOOL_DEFINITIONS,...RECURRING_TOOL_DEFINITIONS],changes=0;
+ const f=await fixture(t,{catalog:()=>catalog}),account=new AccountService(f.env,{onCatalogChanged:()=>{changes++;}});t.after(()=>account.close());
+ await account.workspaceAccess();assert.equal(await account.recurringAccess(),true);
+ assert.equal((await account.callTool('connect_account',{action:'status'})).structuredContent.remoteToolCount,catalog.length);
+ const before=changes;catalog=LIVE_TOOL_DEFINITIONS;await account.workspaceAccess();assert.equal(await account.recurringAccess(),false);assert(changes>before);
+});
+
+
+test('custom-fields capability preserves earlier catalogs and validates definitions and value maps',async t=>{
+ const {CUSTOM_FIELDS_TOOL_DEFINITIONS,CUSTOM_FIELDS_ALL_WORKSPACE_TOOL_DEFINITIONS,RECURRING_TOOL_DEFINITIONS,RECURRING_ALL_WORKSPACE_TOOL_DEFINITIONS,ALL_WORKSPACE_TOOL_DEFINITIONS}=await import('../dist/contract.js');
+ const id='00000000-0000-4000-8000-000000000001';
+ const field={id,name:'Annual cost',type:'number',options:[],archived:false,showOnCard:true};
+ for(const wide of [false,true])for(const recurring of [false,true]){
+  const base=[...(wide?ALL_WORKSPACE_TOOL_DEFINITIONS:TOOL_DEFINITIONS),...(recurring?(wide?RECURRING_ALL_WORKSPACE_TOOL_DEFINITIONS:RECURRING_TOOL_DEFINITIONS):[])];
+  const extension=wide?CUSTOM_FIELDS_ALL_WORKSPACE_TOOL_DEFINITIONS:CUSTOM_FIELDS_TOOL_DEFINITIONS;
+  assert.equal(verifyCatalog([...base,...extension]),wide?'all':'workspace');
+  assert.throws(()=>verifyCatalog([...base,...extension.slice(1)]),/tool list differs/);
+  const altered=globalThis.structuredClone([...base,...extension]);altered.find(tool=>tool.name==='update_task_custom_fields').inputSchema.properties.values.additionalProperties=true;
+  assert.throws(()=>verifyCatalog(altered),/schemas differ/);
+  let enabled=false;const calls=[];
+  const server=createMcpServer({callTool:async(name,args)=>{calls.push({name,args});return {content:[]};}},[],undefined,{workspaceAccess:wide,recurringAccess:recurring,customFieldsAccess:async()=>enabled,customFieldsAvailable:true});
+  const client=new Client({name:'fields-fixture',version:'1'}),[ct,st]=InMemoryTransport.createLinkedPair();
+  await server.connect(st);await client.connect(ct);t.after(async()=>{await client.close();await server.close();});
+  assert.deepEqual((await client.listTools()).tools,base);
+  const args={boardId:id,expectedVersion:0,fields:[field],...(wide?{workspaceId:id}:{})};
+  assert.equal((await client.callTool({name:'update_board_custom_fields',arguments:args})).isError,true);
+  enabled=true;assert.deepEqual((await client.listTools()).tools,[...base,...extension]);
+  assert.equal((await client.callTool({name:'update_board_custom_fields',arguments:args})).isError,undefined);
+  for(const fields of [[{...field,id:'invalid'}],[{...field,type:'secret'}],[{...field,unexpected:true}],Array(51).fill(field)])assert.equal((await client.callTool({name:'update_board_custom_fields',arguments:{...args,fields}})).isError,true);
+  const patch={taskId:id,expectedBoardId:id,expectedVersion:0,expectedDefinitionVersion:1,values:{[id]:130.25}};
+  for(const value of [130.25,'Paid',true,null])assert.equal((await client.callTool({name:'update_task_custom_fields',arguments:{...patch,values:{[id]:value}}})).isError,undefined);
+  for(const values of [{invalid:1},{[id]:{}},{[id]:'a'.repeat(2001)}])assert.equal((await client.callTool({name:'update_task_custom_fields',arguments:{...patch,values}})).isError,true);
+  assert.equal((await client.callTool({name:'update_task_custom_fields',arguments:{...patch,expectedDefinitionVersion:undefined}})).isError,true);
+  assert.equal(calls.length,5);enabled=false;
+  assert.equal((await client.callTool({name:'get_task_custom_fields',arguments:{taskId:id}})).isError,true);
+ }
+});
+
+test('custom-fields bridge negotiates independently alongside recurrence and drops removed access',async()=>{
+ const {CUSTOM_FIELDS_TOOL_DEFINITIONS,RECURRING_TOOL_DEFINITIONS}=await import('../dist/contract.js');
+ const bridge=new RemoteService(),discovery=[],calls=[];let available=true;
+ bridge.client={listTools:async params=>{discovery.push(params);if(!params?.cursor)return {tools:[...LIVE_TOOL_DEFINITIONS,...RECURRING_TOOL_DEFINITIONS],nextCursor:'fields'};return {tools:available&&params?._meta?.['maddots/custom-fields']?CUSTOM_FIELDS_TOOL_DEFINITIONS:[],...(available?{_meta:{'maddots/custom-fields':true}}:{})};},callTool:async params=>{calls.push(params);return {content:[]};}};
+ await bridge.refreshCatalog();assert.equal(bridge.customFieldsAccess(),true);assert.equal(bridge.recurringAccess(),true);
+ assert.deepEqual(discovery,[undefined,{cursor:'fields'},{_meta:{'maddots/custom-fields':true}},{cursor:'fields',_meta:{'maddots/custom-fields':true}}]);
+ const args={taskId:'00000000-0000-4000-8000-000000000001'};
+ await bridge.callTool('get_task_custom_fields',args);await bridge.callTool('get_task_settings',args);await bridge.callTool('get_task',args);
+ assert.deepEqual(calls,[{name:'get_task_custom_fields',arguments:args,_meta:{'maddots/custom-fields':true}},{name:'get_task_settings',arguments:args,_meta:{'maddots/recurring':true}},{name:'get_task',arguments:args}]);
+ available=false;await bridge.refreshCatalog();assert.equal(bridge.customFieldsAccess(),false);assert.equal(bridge.recurringAccess(),true);
+ assert.equal((await bridge.callTool('get_task_custom_fields',args)).isError,true);assert.equal(calls.length,3);
+});
+
+test('custom-fields account sends the first discovery header, updates counts and revokes its catalog',async t=>{
+ const {CUSTOM_FIELDS_TOOL_DEFINITIONS,RECURRING_TOOL_DEFINITIONS,MCP_CUSTOM_FIELDS_HEADER}=await import('../dist/contract.js');
+ let catalog=[...LIVE_TOOL_DEFINITIONS,...RECURRING_TOOL_DEFINITIONS,...CUSTOM_FIELDS_TOOL_DEFINITIONS],changes=0;
+ const f=await fixture(t,{catalog:()=>catalog}),account=new AccountService(f.env,{onCatalogChanged:()=>{changes++;}});t.after(()=>account.close());
+ await account.workspaceAccess();assert.equal(await account.customFieldsAccess(),true);assert.equal(await account.recurringAccess(),true);
+ assert(f.requestHeaders.length>0);assert(f.requestHeaders.every(headers=>headers[MCP_CUSTOM_FIELDS_HEADER]==='1'));
+ assert.equal((await account.callTool('connect_account',{action:'status'})).structuredContent.remoteToolCount,catalog.length);
+ const before=changes;catalog=[...LIVE_TOOL_DEFINITIONS,...RECURRING_TOOL_DEFINITIONS];await account.workspaceAccess();assert.equal(await account.customFieldsAccess(),false);assert.equal(await account.recurringAccess(),true);assert(changes>before);
 });

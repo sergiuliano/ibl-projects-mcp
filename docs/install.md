@@ -297,3 +297,21 @@ A service advertising `maddots/stars` supports `list_starred_tasks`, `star_task`
 Stars belong only to the authenticated account, including for admins. A broad connection lists stars across active workspaces when `workspaceId` is omitted; supply it to filter. Restricted connections stay in their approved workspace. Star writes use `taskId` and optional `workspaceId`, require approved `kanban:write` scope, and are available to board viewers with read access. Completed tasks stay visible; archived or unreadable tasks are hidden. Results contain compact summaries and untrusted user content.
 
 `star_task` and `unstar_task` set personal state, with no shared task edits or version requirement. Optional `idempotencyKey` values are validated but never replay a stored result. Every retry rechecks access; repeated stars preserve their timestamp. The bridge does not automatically retry writes. Native HTTP clients opt in with `x-maddots-mcp-stars: 1` or `params._meta: {"maddots/stars":true}` alongside their existing contract revision.
+
+
+### Recurring tasks
+
+The client automatically discovers recurring support without reconnecting the account. Use `create_recurring_task` for atomic task and schedule creation. Select an existing Backlog or To do column to keep an untouched future template only in Recurring until its appearance time. `list_recurring_tasks` includes pending templates; `get_task_settings` returns their separate settings version for `update_task_settings`.
+
+A recurrence requires `frequency`, `interval`, `startDate`, `endsOn` (or null), IANA `timezone`, and `paused`. Optional `dueTime` is local `HH:mm`; null gives a date-only deadline. `reminderDays` contains distinct integers from 0 through 365. The largest lead controls appearance; an empty array disables reminders and releases on the due date. `dueTime: "08:30"` with `timezone: "Europe/Bucharest"` gives the existing 30-minute calendar export ending at 09:00. Creation does not enable calendar synchronization.
+
+Preserve the returned `taskTypeId` when replacing recurrence. Set `paused: true` to pause, or `recurrence: null` to stop future repeats. Existing occurrences remain independent tasks. Updating settings advances task and board versions. Template visibility is server-controlled; `sourceVisible` is never an input.
+
+
+### Custom fields
+
+The client discovers custom fields independently of recurring tasks. `get_board_custom_fields` returns definitions, their version and `canManage`; `get_task_custom_fields` returns the task values, active definitions, board ID, value version, definition version and `canEdit`.
+
+Creating or customizing definitions requires a workspace admin or platform superadmin who already has board management access. `update_board_custom_fields` replaces the full ordered `fields` array using its definition `expectedVersion`. Keep existing fields and options, including archived entries. Give additions stable UUIDs; use `archived` to retire them. Existing field types cannot change. Types are `text`, `number`, `date`, `checkbox` and `select`; only select fields have options. `showOnCard` controls display on cards. Boards support up to 50 fields and select fields up to 50 options.
+
+Board editors can populate task values through `update_task_custom_fields`. Supply `expectedBoardId`, the value `expectedVersion` and `expectedDefinitionVersion` from the dedicated read. Key `values` by field UUID: omitted keys remain unchanged, null clears, dates use `YYYY-MM-DD`, and select values use option UUIDs. Ordinary task content versions do not substitute for these versions. Definitions and values remain in the dedicated tools; existing task response schemas stay unchanged. Names and text values are untrusted user content.
