@@ -47,7 +47,7 @@ export async function runWorker(): Promise<void> {
       return true;
     },
   });
-  const server = createMcpServer(account, [CONNECT_ACCOUNT_TOOL], undefined, { workspaceAccess: () => account.workspaceAccess(), liveAccess: () => account.liveAccess(), planAccess: () => account.planAccess(), starsAccess: () => account.starsAccess(), planAgentAccess: () => account.planAgentAccess(), recurringAccess: () => account.recurringAccess(), customFieldsAccess: () => account.customFieldsAccess() });
+  const server = createMcpServer(account, [CONNECT_ACCOUNT_TOOL], undefined, { workspaceAccess: () => account.workspaceAccess(), liveAccess: () => account.liveAccess(), planAccess: () => account.planAccess(), starsAccess: () => account.starsAccess(), planAgentAccess: () => account.planAgentAccess(), recurringAccess: () => account.recurringAccess(), customFieldsAccess: () => account.customFieldsAccess(), boardPlanSettingsAccess: () => account.boardPlanSettingsAccess() });
   // These methods exist only between the local supervisor and its child. They
   // are not tools and the supervisor never forwards them from the MCP host.
   server.fallbackRequestHandler = async request => {

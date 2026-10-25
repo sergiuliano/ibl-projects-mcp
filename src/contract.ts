@@ -206,3 +206,14 @@ export const CUSTOM_FIELDS_TOOL_DEFINITIONS: Tool[] = CUSTOM_FIELDS_OPERATIONS.m
 export const CUSTOM_FIELDS_ALL_WORKSPACE_TOOL_DEFINITIONS: Tool[] = CUSTOM_FIELDS_TOOL_DEFINITIONS.map(tool=>({
   ...tool,inputSchema:{...tool.inputSchema,properties:{...tool.inputSchema.properties,workspaceId:{...uuid,description:'An active workspace returned by list_workspaces. Omit to use the connection default workspace.'}}},
 }));
+
+// Board Plan settings are independently negotiated; prior catalogs stay fixed.
+export const MCP_BOARD_PLAN_SETTINGS_HEADER = 'x-maddots-mcp-board-plan-settings';
+export const MCP_BOARD_PLAN_SETTINGS_CAPABILITY_VERSION = '1';
+export const BOARD_PLAN_SETTINGS_OPERATIONS: Operation[] = [
+  operation('update_board_plan_settings', 'Set whether a board is excluded from the default plan and all-board plans. Plans that explicitly select the board still include it. Requires current board management permission, Plan enabled for the workspace and the board exclusion feature enabled. Read planSettings from list_projects or get_board and supply its version as expectedVersion. Excluding is refused with PLAN_BOARD_IN_USE while cards belong to modules or milestones of active all-board plans. A stale version returns a conflict; read current state before deciding another write. Including again is always allowed.', 'PUT', '/plan/boards/:id/settings', {boardId:uuid,excludeFromPlans:bool,expectedVersion:planVersion}, ['boardId','excludeFromPlans','expectedVersion'], {pathKey:'boardId'}),
+];
+export const BOARD_PLAN_SETTINGS_TOOL_DEFINITIONS: Tool[] = BOARD_PLAN_SETTINGS_OPERATIONS.map(({tool})=>tool);
+export const BOARD_PLAN_SETTINGS_ALL_WORKSPACE_TOOL_DEFINITIONS: Tool[] = BOARD_PLAN_SETTINGS_TOOL_DEFINITIONS.map(tool=>({
+  ...tool,inputSchema:{...tool.inputSchema,properties:{...tool.inputSchema.properties,workspaceId:{...uuid,description:'An active workspace returned by list_workspaces. Omit to use the connection default workspace.'}}},
+}));

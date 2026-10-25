@@ -1,5 +1,5 @@
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
-import { READ_CONTENT_NOTICE, CUSTOM_FIELDS_TOOL_DEFINITIONS, RECURRING_TOOL_DEFINITIONS, STAR_TOOL_DEFINITIONS, PLAN_AGENT_TOOL_DEFINITIONS, PLAN_TOOL_DEFINITIONS, LIVE_TOOL_DEFINITIONS, TOOL_DEFINITIONS, ALL_WORKSPACE_TOOL_DEFINITIONS } from './contract.js';
+import { READ_CONTENT_NOTICE, BOARD_PLAN_SETTINGS_TOOL_DEFINITIONS, CUSTOM_FIELDS_TOOL_DEFINITIONS, RECURRING_TOOL_DEFINITIONS, STAR_TOOL_DEFINITIONS, PLAN_AGENT_TOOL_DEFINITIONS, PLAN_TOOL_DEFINITIONS, LIVE_TOOL_DEFINITIONS, TOOL_DEFINITIONS, ALL_WORKSPACE_TOOL_DEFINITIONS } from './contract.js';
 import { mcpConfig, accessToken, BridgeError, endpoint } from './config.js';
 import { CredentialStore, type Credential, type Persistence, type Scope } from './credentials.js';
 import { PairingFlow, pairingHarness, type PendingPairing } from './pairing.js';
@@ -23,7 +23,7 @@ export const CONNECT_ACCOUNT_TOOL: Tool = {
 const restrictedAccess = 'This connection covers every project you can access in the workspace selected when you approved the connection, including projects shared with you later in that workspace. The server enforces the account’s current project permissions.';
 const result = (value: Record<string, unknown>): CallToolResult => ({ structuredContent: value, content: [{ type: 'text', text: JSON.stringify(value) }] });
 const safeError = (error: unknown): BridgeError => error instanceof BridgeError ? error : new BridgeError('CONNECTION_FAILED', 'The account connection could not complete. Use connect_account to request a new code explicitly.');
-type Remote = Pick<RemoteService, 'callTool' | 'close'> & { initialize(credential?: string): Promise<WorkspaceAccess | void>; liveAccess?():boolean; planAccess?():boolean; starsAccess?():boolean; planAgentAccess?():boolean; recurringAccess?():boolean; customFieldsAccess?():boolean; refreshCatalog?():Promise<WorkspaceAccess> };
+type Remote = Pick<RemoteService, 'callTool' | 'close'> & { initialize(credential?: string): Promise<WorkspaceAccess | void>; liveAccess?():boolean; planAccess?():boolean; starsAccess?():boolean; planAgentAccess?():boolean; recurringAccess?():boolean; customFieldsAccess?():boolean; boardPlanSettingsAccess?():boolean; refreshCatalog?():Promise<WorkspaceAccess> };
 type Store = Pick<CredentialStore, 'load' | 'save' | 'remove'>;
 type Flow = Pick<PairingFlow, 'start' | 'wait' | 'snapshot' | 'cancel'>;
 type Confirmation = boolean | 'cancelled' | 'not_confirmed' | undefined;
@@ -39,6 +39,7 @@ export class AccountService {
   private planAgent = false;
   private recurring = false;
   private customFields = false;
+  private boardPlanSettings = false;
   private promoting = false;
   private activeCalls = 0;
   private readonly retired = new Set<Remote>();
@@ -106,7 +107,7 @@ export class AccountService {
         if (remote !== this.remote || this.closed) throw new BridgeError('CANCELLED', 'Account connection changed before the operation was submitted.');
         this.ready = true;
         this.setMode(mode ?? 'workspace');
-        this.setLive(remote.liveAccess?.()??false);this.setPlan(remote.planAccess?.()??false);this.setStars(remote.starsAccess?.()??false);this.setPlanAgent(remote.planAgentAccess?.()??false);this.setRecurring(remote.recurringAccess?.()??false);this.setCustomFields(remote.customFieldsAccess?.()??false);
+        this.setLive(remote.liveAccess?.()??false);this.setPlan(remote.planAccess?.()??false);this.setStars(remote.starsAccess?.()??false);this.setPlanAgent(remote.planAgentAccess?.()??false);this.setRecurring(remote.recurringAccess?.()??false);this.setCustomFields(remote.customFieldsAccess?.()??false);this.setBoardPlanSettings(remote.boardPlanSettingsAccess?.()??false);
       }).catch(error => {
         if (remote === this.remote && error instanceof BridgeError && error.code === 'AUTH_REQUIRED') { this.secret = undefined; this.credential = undefined; this.setMode('workspace'); }
         throw error;
@@ -127,6 +128,8 @@ export class AccountService {
   private setPlanAgent(planAgent:boolean):void {if(planAgent!==this.planAgent){this.planAgent=planAgent;this.onCatalogChanged?.();}}
   private setRecurring(recurring:boolean):void {if(recurring!==this.recurring){this.recurring=recurring;this.onCatalogChanged?.();}}
   private setCustomFields(customFields:boolean):void {if(customFields!==this.customFields){this.customFields=customFields;this.onCatalogChanged?.();}}
+  private setBoardPlanSettings(boardPlanSettings:boolean):void {if(boardPlanSettings!==this.boardPlanSettings){this.boardPlanSettings=boardPlanSettings;this.onCatalogChanged?.();}}
+  async boardPlanSettingsAccess():Promise<boolean>{return this.ready&&this.boardPlanSettings;}
   async customFieldsAccess():Promise<boolean>{return this.ready&&this.customFields;}
   async recurringAccess():Promise<boolean>{return this.ready&&this.recurring;}
   async starsAccess():Promise<boolean>{return this.ready&&this.stars;}
@@ -138,11 +141,11 @@ export class AccountService {
   // remote contract again on every fresh process before advertising it.
   async workspaceAccess(): Promise<boolean> {
     let remote:Remote|undefined;
-    try { await this.ensureConnected();remote=this.remote;if(remote.refreshCatalog){const mode=await remote.refreshCatalog();if(remote===this.remote){this.setMode(mode);this.setLive(remote.liveAccess?.()??false);this.setPlan(remote.planAccess?.()??false);this.setStars(remote.starsAccess?.()??false);this.setPlanAgent(remote.planAgentAccess?.()??false);this.setRecurring(remote.recurringAccess?.()??false);this.setCustomFields(remote.customFieldsAccess?.()??false);}}return this.mode === 'all'; }
+    try { await this.ensureConnected();remote=this.remote;if(remote.refreshCatalog){const mode=await remote.refreshCatalog();if(remote===this.remote){this.setMode(mode);this.setLive(remote.liveAccess?.()??false);this.setPlan(remote.planAccess?.()??false);this.setStars(remote.starsAccess?.()??false);this.setPlanAgent(remote.planAgentAccess?.()??false);this.setRecurring(remote.recurringAccess?.()??false);this.setCustomFields(remote.customFieldsAccess?.()??false);this.setBoardPlanSettings(remote.boardPlanSettingsAccess?.()??false);}}return this.mode === 'all'; }
     catch(error) {
       if(remote&&remote===this.remote&&error instanceof BridgeError&&error.code==='AUTH_REQUIRED'){
         this.ready=false;this.secret=undefined;this.credential=undefined;this.terminal=error;
-        this.setMode('workspace');this.setLive(false);this.setPlan(false);this.setStars(false);this.setPlanAgent(false);this.setRecurring(false);this.setCustomFields(false);await remote.close();
+        this.setMode('workspace');this.setLive(false);this.setPlan(false);this.setStars(false);this.setPlanAgent(false);this.setRecurring(false);this.setCustomFields(false);this.setBoardPlanSettings(false);await remote.close();
       }
       return false;
     }
@@ -164,7 +167,7 @@ export class AccountService {
       const { userCode, ...details } = pending;
       return result({ ...details, ...(this.privatePairingCode ? {} : { userCode }), instructions: this.privatePairingCode ? 'Use the approval code shown in your host’s private prompt. Approve it in MadDots, then check status.' : 'Open the verification link, sign in to the intended account, enter this code, and approve access. Then call connect_account with action status or request your project operation.', accountAccess });
     }
-    if (this.ready) return result({ status: 'connected', workspaceAccess: this.mode, remoteToolCount: (this.customFields ? CUSTOM_FIELDS_TOOL_DEFINITIONS.length : 0) + (this.recurring ? RECURRING_TOOL_DEFINITIONS.length : 0) + (this.planAgent ? PLAN_AGENT_TOOL_DEFINITIONS.length : 0) + (this.stars ? STAR_TOOL_DEFINITIONS.length : 0) + (this.plan ? PLAN_TOOL_DEFINITIONS.length : this.live ? LIVE_TOOL_DEFINITIONS.length : this.mode === 'all' ? ALL_WORKSPACE_TOOL_DEFINITIONS.length : TOOL_DEFINITIONS.length), ...(this.terminal ? { replacementError: { code: this.terminal.code, message: this.terminal.message } } : {}), ...(this.credential ? { account: this.credential.account, scopes: this.credential.scopes, expiresAt: this.credential.expiresAt } : { credentialSource: 'environment' }), remembered: this.persistence.persisted, ...(persistenceNotice ? { notice: persistenceNotice } : {}), accountAccess });
+    if (this.ready) return result({ status: 'connected', workspaceAccess: this.mode, remoteToolCount: (this.boardPlanSettings ? BOARD_PLAN_SETTINGS_TOOL_DEFINITIONS.length : 0) + (this.customFields ? CUSTOM_FIELDS_TOOL_DEFINITIONS.length : 0) + (this.recurring ? RECURRING_TOOL_DEFINITIONS.length : 0) + (this.planAgent ? PLAN_AGENT_TOOL_DEFINITIONS.length : 0) + (this.stars ? STAR_TOOL_DEFINITIONS.length : 0) + (this.plan ? PLAN_TOOL_DEFINITIONS.length : this.live ? LIVE_TOOL_DEFINITIONS.length : this.mode === 'all' ? ALL_WORKSPACE_TOOL_DEFINITIONS.length : TOOL_DEFINITIONS.length), ...(this.terminal ? { replacementError: { code: this.terminal.code, message: this.terminal.message } } : {}), ...(this.credential ? { account: this.credential.account, scopes: this.credential.scopes, expiresAt: this.credential.expiresAt } : { credentialSource: 'environment' }), remembered: this.persistence.persisted, ...(persistenceNotice ? { notice: persistenceNotice } : {}), accountAccess });
     if (this.terminal) return failure(this.terminal.code, this.terminal.message);
     return result({ status: this.secret ? 'configured' : 'not_connected', instructions: 'Call connect_account with action connect to verify existing authorization or obtain an approval code.', accountAccess });
   }
@@ -214,7 +217,7 @@ export class AccountService {
             this.flow = undefined;
             this.terminal = undefined;
             this.setMode(mode ?? 'workspace');
-            this.setLive(candidate.liveAccess?.()??false);this.setPlan(candidate.planAccess?.()??false);this.setStars(candidate.starsAccess?.()??false);this.setPlanAgent(candidate.planAgentAccess?.()??false);this.setRecurring(candidate.recurringAccess?.()??false);this.setCustomFields(candidate.customFieldsAccess?.()??false);
+            this.setLive(candidate.liveAccess?.()??false);this.setPlan(candidate.planAccess?.()??false);this.setStars(candidate.starsAccess?.()??false);this.setPlanAgent(candidate.planAgentAccess?.()??false);this.setRecurring(candidate.recurringAccess?.()??false);this.setCustomFields(candidate.customFieldsAccess?.()??false);this.setBoardPlanSettings(candidate.boardPlanSettingsAccess?.()??false);
             this.retired.add(previous);
             await this.closeRetired();
           } finally {
