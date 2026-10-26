@@ -11,7 +11,7 @@ export function pairingHarness(env: NodeJS.ProcessEnv, override?: string): AiHar
   return value as AiHarness;
 }
 
-export type PendingPairing = { status: 'pending'; userCode: string; verificationUri: string; expiresAt: string; expiresIn: number; scopes: Scope[] };
+export type PendingPairing = { status: 'pending'; userCode: string; verificationUri: string; verificationUriComplete?: string; expiresAt: string; expiresIn: number; scopes: Scope[] };
 type Timing = { now: () => number; sleep: (ms: number, signal: AbortSignal) => Promise<void> };
 const clock: Timing = {
   now: Date.now,
@@ -85,7 +85,9 @@ export class PairingFlow {
       throw new BridgeError('PAIRING_RESPONSE_INVALID', 'The account connection service returned invalid approval instructions.');
     }
     const deadline = Math.min(expiry, now + 300_000);
-    this.pending = { status: 'pending', userCode: data.userCode, verificationUri: data.verificationUri, expiresAt: new Date(deadline).toISOString(), expiresIn: Math.ceil((deadline - now) / 1000), scopes: [...scopes] };
+    // Exact spelling also rejects credentials, alternate paths, queries and encoded fragments.
+    const complete = new URL('/integrations/connect#code=' + data.userCode, this.endpoint.origin).href;
+    this.pending = { status: 'pending', userCode: data.userCode, verificationUri: data.verificationUri, ...(data.verificationUriComplete === complete ? { verificationUriComplete: complete } : {}), expiresAt: new Date(deadline).toISOString(), expiresIn: Math.ceil((deadline - now) / 1000), scopes: [...scopes] };
     this.completion = this.poll(data.deviceCode, deadline, data.interval * 1000, scopes);
     void this.completion.catch(() => {});
     return this.snapshot()!;

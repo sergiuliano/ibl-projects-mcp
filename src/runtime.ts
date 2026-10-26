@@ -32,7 +32,7 @@ export async function run(args: string[], context: RuntimeContext): Promise<void
     process.once('SIGINT', close); process.once('SIGTERM', close);
     try {
       const persistence = await account.setup(pending => {
-        process.stdout.write(`Open ${pending.verificationUri}\nEnter code: ${pending.userCode}\nApprove access for your account. This code expires at ${pending.expiresAt}. Waiting for approval...\n`);
+        process.stdout.write(`Open ${pending.verificationUriComplete || pending.verificationUri}\nEnter code: ${pending.userCode}\nApprove access for your account. This code expires at ${pending.expiresAt}. Waiting for approval...\n`);
       }, args.includes('--read-only'), args.includes('--reconnect'));
       if (persistence.notice) process.stdout.write(`${persistence.notice}\n`);
       process.stdout.write('MadDots MCP is authenticated and its tool contract matches. No tool operation was submitted.\n');

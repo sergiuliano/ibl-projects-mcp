@@ -72,6 +72,40 @@ test('pairing returns only a code/link and claims one credential after bounded p
   assert.deepEqual(fixture.requests.slice(1).map(item => JSON.parse(item.init.body)), [{ deviceCode }, { deviceCode }]);
 });
 
+test('one-tap primary link accepts only the exact same-origin connect fragment', async () => {
+  const verificationUriComplete = 'https://example.test/integrations/connect#code=' + userCode;
+  const fixture = virtualFlow([response(approved())], { instructions: { verificationUriComplete } });
+  const pending = await fixture.flow.start(scopes);
+  assert.equal(pending.verificationUri, 'https://example.test/integrations');
+  assert.equal(pending.verificationUriComplete, verificationUriComplete);
+  assert.equal(pending.userCode, userCode);
+  safeOutput(pending);
+  await fixture.flow.wait();
+});
+
+test('one-tap primary link ignores foreign, malformed or mismatched optional links', async () => {
+  const invalid = [
+    'https://attacker.test/integrations/connect#code=' + userCode,
+    'http://example.test/integrations/connect#code=' + userCode,
+    'https://example.test/integrations#code=' + userCode,
+    'https://example.test/integrations/connect/?code=' + userCode,
+    'https://example.test/integrations/connect?extra=1#code=' + userCode,
+    'https://example.test/integrations/connect#code=EFGH6789',
+    'https://example.test/integrations/connect#code=' + userCode + '&approve=1',
+    'https://example.test/integrations/connect#code=%41BCD2345',
+    'https://user:password@example.test/integrations/connect#code=' + userCode,
+    '/integrations/connect#code=' + userCode,
+    null, 123, {}, '',
+  ];
+  for (const verificationUriComplete of invalid) {
+    const fixture = virtualFlow([response(approved())], { instructions: { verificationUriComplete } });
+    const pending = await fixture.flow.start(scopes);
+    assert.equal(pending.verificationUriComplete, undefined);
+    assert.equal(pending.verificationUri, 'https://example.test/integrations');
+    await fixture.flow.wait();
+  }
+});
+
 test('poll throttling honors Retry-After without polling faster than the advertised interval', async () => {
   const fixture = virtualFlow([response({}, 429, { 'Retry-After': '12' }), response({}, 429, { 'Retry-After': '1' }), response(approved())]);
   await fixture.flow.start(scopes); await fixture.flow.wait();

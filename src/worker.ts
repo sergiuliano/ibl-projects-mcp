@@ -41,7 +41,7 @@ export async function runWorker(): Promise<void> {
       if (!hostElicitation) return false;
       await server.elicitInput({
         mode: 'form',
-        message: `Open ${pending.verificationUri} and enter code ${pending.userCode}. Sign in to the intended account and review the requested connection. The code expires at ${pending.expiresAt}.`,
+        message: `Open ${pending.verificationUriComplete || pending.verificationUri} and ${pending.verificationUriComplete ? 'review' : 'enter'} code ${pending.userCode}. Sign in to the intended account and review the requested connection. The code expires at ${pending.expiresAt}.`,
         requestedSchema: { type: 'object', properties: { acknowledged: { type: 'boolean', title: 'I have seen the approval code', default: false } }, required: ['acknowledged'] },
       }, { signal });
       return true;
